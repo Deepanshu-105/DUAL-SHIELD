@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract Hello {
+    string public message;
+
+    constructor(string memory initial) {
+        message = initial;
+    }
+
+    function setMessage(string calldata newMessage) external {
+        message = newMessage;
+    }
+}

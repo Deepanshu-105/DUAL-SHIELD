@@ -1,0 +1,5 @@
+blockchain/node_modules/
+blockchain/artifacts/
+blockchain/cache/
+blockchain/deployed.json
+.venv/
