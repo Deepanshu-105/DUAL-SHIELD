@@ -13,7 +13,7 @@ services:
       DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server rsyslog ipset iptables python3 &&
       (id testuser || (useradd -m testuser && echo 'testuser:password123' | chpasswd)) &&
       echo 'auth,authpriv.* /var/log/auth.log' > /etc/rsyslog.d/50-default.conf &&
-      service ssh start && rsyslogd && sleep infinity"
+      touch /var/log/auth.log && chown syslog:adm /var/log/auth.log && service ssh start && rsyslogd && sleep infinity"
 
   peer:
     image: ubuntu:22.04
@@ -34,7 +34,7 @@ services:
       lab:
         ipv4_address: 172.30.0.12
     command: >
-      bash -c "apt-get update && apt-get install -y hydra &&
+      bash -c "apt-get update && apt-get install -y hydra iputils-ping &&
       printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt && sleep infinity"
 
 networks:
