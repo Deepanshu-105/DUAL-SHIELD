@@ -1,0 +1,45 @@
+services:
+  target:
+    image: ubuntu:22.04
+    container_name: target
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./detector:/root/detector
+    networks:
+      lab:
+        ipv4_address: 172.30.0.10
+    command: >
+      bash -c "apt-get update &&
+      DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server rsyslog ipset iptables python3 &&
+      (id testuser || (useradd -m testuser && echo 'testuser:password123' | chpasswd)) &&
+      echo 'auth,authpriv.* /var/log/auth.log' > /etc/rsyslog.d/50-default.conf &&
+      service ssh start && rsyslogd && sleep infinity"
+
+  peer:
+    image: ubuntu:22.04
+    container_name: peer
+    tty: true
+    stdin_open: true
+    networks:
+      lab:
+        ipv4_address: 172.30.0.11
+    command: sleep infinity
+
+  attacker:
+    image: kalilinux/kali-rolling
+    container_name: attacker
+    tty: true
+    stdin_open: true
+    networks:
+      lab:
+        ipv4_address: 172.30.0.12
+    command: >
+      bash -c "apt-get update && apt-get install -y hydra &&
+      printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt && sleep infinity"
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
