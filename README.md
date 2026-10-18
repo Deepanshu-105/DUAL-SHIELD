@@ -6,13 +6,6 @@ npm install
 npm run dev     # opens at http://localhost:3000
 
 
-## Dashboard
-```
-cd dashboard
-npm install
-npm run dev     # opens at http://localhost:3000
-```
-
 ## Lab (Docker Compose)
 ```
 docker compose up -d
