@@ -8,4 +8,4 @@ would matter only if an HTTPS target is added later.
 
 ## M1 Day 2: HASSH observed in the lab
 Hydra (libssh): 015322ee8471fa8338c558a918183b11
-OpenSSH client: <hash A>
+OpenSSH client: PASTE_THE_HASH_HERE
