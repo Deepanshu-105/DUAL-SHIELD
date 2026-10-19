@@ -34,7 +34,7 @@ services:
       lab:
         ipv4_address: 172.30.0.12
     command: >
-      bash -c "apt-get update && apt-get install -y hydra iputils-ping &&
+      bash -c "apt-get update && apt-get install -y hydra iputils-ping openssh-client &&
       printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt && sleep infinity"
 
 networks:
