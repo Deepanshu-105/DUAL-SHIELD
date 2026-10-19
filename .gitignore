@@ -3,3 +3,5 @@ blockchain/artifacts/
 blockchain/cache/
 blockchain/deployed.json
 .venv/
+__pycache__/
+*.pyc
