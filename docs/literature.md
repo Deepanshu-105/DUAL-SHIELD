@@ -10,7 +10,7 @@ Checked on 2026-10-19 against the five sources cited in the Novelty Review (sect
 | 2 | Hamburg thesis | Hipke, D. (2025). *Möglichkeiten zur Erkennung von Crypto-Ransomware durch File-Integrity-Monitoring* ("Possibilities for detecting crypto ransomware through file integrity monitoring"). Bachelor thesis, B.Sc. Angewandte Informatik, HAW Hamburg. Submitted 16 July 2025. | https://reposit.haw-hamburg.de/bitstream/20.500.12738/19400/1/BA_M%c3%b6glichkeiten%20zur%20Erkennung%20von%20Crypto-Ransomware%20durch%20File-Integrity-Monitoring_geschw%c3%a4rzt.pdf | Bachelor thesis (German) | ✅ | 2026-10-19 |
 | 3 | BLOCIS | Gong, S., Lee, C. (2020). *BLOCIS: Blockchain-Based Cyber Threat Intelligence Sharing Framework for Sybil-Resistance.* Electronics 9(3), article 521. Published 21 March 2020. | https://www.mdpi.com/2079-9292/9/3/521 | Journal article | ✅ | 2026-10-19 |
 | 4 | 2023 undergraduate paper | Hasan, M., Alam, M., Akash, A. N. (2023, January). *Blockchain-Based Intrusion Detection Systems (IDS) using Decentralized Threat Intelligence Sharing.* IUB Academic Repository (listed under Undergraduate Thesis). | http://ar.iub.edu.bd/handle/11348/988 | Undergraduate thesis | ✅ | 2026-10-19 |
-| 5 | Ransomware patent | US patent 12,361,122, *Systems and methods for ransomware detection.* Claims priority to US provisional 63/203,505, filed 26 July 2021. | https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12361122 | Patent | ⚠️ content confirmed; assignee and grant date not seen | 2026-10-19 |
+| 5 | Ransomware patent | US patent 12,361,122 B2, *Systems and methods for ransomware detection.* Inventor: Uri Sternfeld. Assignee: Cybereason Inc. Filed 26 July 2022; granted 15 July 2025. Claims priority to US provisional 63/203,505, filed 26 July 2021. | https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12361122 | Patent | ✅ (assignee and grant date confirmed on Google Patents) | 2026-10-19 |
 
 ## Verification checklist (per source)
 
@@ -21,7 +21,7 @@ Checked on 2026-10-19 against the five sources cited in the Novelty Review (sect
 - [x] 3 BLOCIS: link opens; authors, title, year, journal match; Sybil-resistance is the stated focus
 - [x] 4 Undergraduate paper: link opens; authors, year match; it is described as a theoretical analysis
 - [x] 5 Patent: number and title open on USPTO; chi-square, extension/magic mismatch and header modification all appear in the claims
-- [ ] 5 Patent: assignee and grant date (open the patent on patents.google.com and copy them in)
+- [x] 5 Patent: assignee (Cybereason Inc) and grant date (15 July 2025) confirmed on Google Patents
 
 ## Notes per source
 
@@ -53,7 +53,6 @@ Checked on 2026-10-19 against the five sources cited in the Novelty Review (sect
 - Relevance to Dual-Shield: supports the Novelty Review point that chi-square and header checks are known techniques. It also skips comparison for valid archives to avoid false positives, which matches our baseline-gate idea.
 - Gap it leaves (our novelty): endpoint-only; no blockchain sharing, no on-chain anchoring of Tattack, no snapshot rollback in the claims I read.
 - Caution: its claims also cover counting flagged files in a time window and terminating the process, which resembles our "3 files in 2 s then kill" rule. Do not describe that rule as new. This is a novelty-wording point, not legal advice.
-- To do: copy the assignee and grant date from Google Patents.
 
 ## Other sources found (not yet in Novelty Review)
 
