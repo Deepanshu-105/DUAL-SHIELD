@@ -1,11 +1,17 @@
-import os, shutil, sys
+import argparse, os, shutil, sys, time
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 SRC = "data/sample"
 DST = "data/sample_copy"
 
 def main():
-    dst = sys.argv[1] if len(sys.argv) > 1 else DST
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dst", nargs="?", default=DST)
+    ap.add_argument("--delay", type=float, default=0.0,
+                    help="seconds to pause per file while its handle is still open "
+                         "(slows the attack so the kill rule can be tested)")
+    args = ap.parse_args()
+    dst, delay = args.dst, args.delay
     if os.path.abspath(dst) == os.path.abspath(SRC):
         sys.exit("Refusing to encrypt the originals.")
     if not os.path.basename(dst.rstrip("/")).endswith("copy"):
@@ -26,12 +32,17 @@ def main():
     for root, _, names in os.walk(dst):
         for name in names:
             p = os.path.join(root, name)
-            data = open(p, "rb").read()
+            with open(p, "rb") as f:
+                data = f.read()
             nonce = os.urandom(16)
             enc = Cipher(algorithms.AES(key), modes.CTR(nonce)).encryptor()
             with open(p, "wb") as f:
                 f.write(nonce + enc.update(data) + enc.finalize())
+                f.flush()
+                if delay:
+                    time.sleep(delay)   # handle still open, like a real encryptor
             n += 1
     print("encrypted %d files in %s (originals untouched)" % (n, dst))
 
-main()
+if __name__ == "__main__":
+    main()

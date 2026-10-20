@@ -76,9 +76,13 @@ def scan(folder, base):
     print("scan %s: %d of %d files flagged" % (folder, len(flagged), total))
     return flagged
 
-def watch(folder, base):
+def watch(folder, base, kill=False):
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+    rule = None
+    if kill:
+        from killrule import KillRule
+        rule = KillRule(folder)
     class H(FileSystemEventHandler):
         def on_modified(self, ev):
             if ev.is_directory:
@@ -87,10 +91,12 @@ def watch(folder, base):
             check, detail = check_file(ev.src_path, rel, base)
             if check:
                 print("%.3f FLAGGED [check %s] %s  %s" % (time.time(), check, rel, detail), flush=True)
+                if rule:
+                    rule.on_flag(rel)
     obs = Observer()
     obs.schedule(H(), folder, recursive=True)
     obs.start()
-    print("watching", folder, "(Ctrl+C to stop)")
+    print("watching", folder, "(kill rule %s)" % ("ON" if kill else "off"), "(Ctrl+C to stop)", flush=True)
     try:
         while True:
             time.sleep(0.5)
@@ -106,4 +112,7 @@ if __name__ == "__main__":
         print("baseline saved for %d files" % len(base))
     else:
         base = json.load(open("baseline.json"))
-        scan(folder, base) if mode == "scan" else watch(folder, base)
+        if mode == "scan":
+            scan(folder, base)
+        else:
+            watch(folder, base, kill="--kill" in sys.argv[3:])
