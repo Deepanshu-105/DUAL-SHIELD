@@ -15,9 +15,10 @@ MAGIC = {
     ".gz": b"\x1f\x8b",
 }
 
-# for a 256-bucket test (255 degrees of freedom), random data gives ~255 on average
-# a flat/random file lands roughly in 200-310; text and structured files score far higher
-RANDOM_LOW, RANDOM_HIGH = 200, 310
+# blueprint rule: 4 KB block, 255 degrees of freedom.
+# chi-square below 310.46 means p > 0.01, so uniformity cannot be rejected -> looks encrypted.
+BLOCK_SIZE = 4096
+CHI_SQUARE_THRESHOLD = 310.46
 
 
 def chi_square_bytes(data: bytes) -> float:
@@ -39,10 +40,10 @@ def magic_ok(path: str, data: bytes) -> str:
 
 def analyse(path: str) -> dict:
     with open(path, "rb") as f:
-        data = f.read(1024 * 1024)  # first 1 MB is enough
+        data = f.read(BLOCK_SIZE)
     chi = chi_square_bytes(data)
     header = magic_ok(path, data)
-    looks_random = RANDOM_LOW <= chi <= RANDOM_HIGH
+    looks_random = chi < CHI_SQUARE_THRESHOLD
     suspicious = (looks_random and header != "OK") or header == "BAD"
     return {"file": path, "size": len(data), "chi2": chi, "header": header,
             "verdict": "SUSPICIOUS" if suspicious else "clean"}
