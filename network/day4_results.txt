@@ -1,0 +1,33 @@
+[FAIL] 198.51.100.1 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.1 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.1 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.2 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.2 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.2 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.3 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.3 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.3 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.4 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.4 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.4 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.5 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.5 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.5 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.6 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.6 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.6 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.7 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.7 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.7 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.8 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.8 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.8 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.9 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.9 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.9 -> 3 failure(s) in last 5s
+[FAIL] 198.51.100.10 -> 1 failure(s) in last 5s
+[FAIL] 198.51.100.10 -> 2 failure(s) in last 5s
+[FAIL] 198.51.100.10 -> 3 failure(s) in last 5s
+RESULT runs=10 local_drop_avg=2.35 ms (max 2.99, target <20) lookup_avg=0.0016 ms (max 0.0023, target <2) tor_entries=1210 tor_load=1.9 ms
+PASS
+REAL ATTACK drop_ms=15.146 lookup_ms=0.004 hassh_before_fail=yes tor=yes known_tool=yes
