@@ -5,3 +5,4 @@ blockchain/deployed.json
 .venv/
 __pycache__/
 *.pyc
+network/measurements.csv

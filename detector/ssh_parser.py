@@ -18,9 +18,18 @@ import time
 from collections import defaultdict, deque
 
 import hassh
+import sys
+
+sys.path.insert(0, "/opt/shield")
+try:
+    import chain_report  # M1: reports blocks to the CityShield contract
+except Exception as e:
+    chain_report = None
+    print(f"[WARN] chain reporting is off: {e}", flush=True)
 
 LOG_PATH = os.environ.get("LOG_PATH", "/var/log/auth.log")
 IPSET_NAME = "city_blacklist"
+PARSER_LOG = os.environ.get("PARSER_LOG", "/var/log/parser_block.log")
 THRESHOLD = 3   # failures ...
 WINDOW = 5      # ... inside this many seconds
 
@@ -52,6 +61,24 @@ def tag(ip):
     return f"  hassh={h}" if h else ""
 
 
+def report_async(ip):
+    """Send the block to the chain in a background thread so log tailing never stalls."""
+    if chain_report is None:
+        return
+
+    def run():
+        try:
+            fp = fingerprints.get(ip, "no-hassh")
+            chain_report.report_to_chain(ip, fp, who=1)
+            if os.environ.get("COREPORT") == "1":  # DEMO ONLY: stands in for the peer's report
+                chain_report.report_to_chain(ip, fp, who=2)
+            print(f"[CHAIN] reported {ip}", flush=True)
+        except Exception as e:
+            print(f"[WARN] chain report failed for {ip}: {e}", flush=True)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def block_ip(ip):
     if ip in WHITELIST or ip in blocked_ips:
         return
@@ -60,6 +87,12 @@ def block_ip(ip):
                        check=True, capture_output=True, text=True)
         blocked_ips.add(ip)
         print(f"[BLOCKED] {ip} added to {IPSET_NAME}{tag(ip)}", flush=True)
+        ts = time.time()
+        line = f"PARSER_BLOCK ip={ip} ts={ts:.3f}"
+        print(f"[{line.split()[0]}] {line}", flush=True)
+        with open(PARSER_LOG, "a") as f:
+            f.write(line + "\n")
+        report_async(ip)
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] could not add {ip}: {e.stderr.strip()}", flush=True)
 

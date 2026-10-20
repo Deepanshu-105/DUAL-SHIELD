@@ -24,7 +24,10 @@ services:
       lab:
         ipv4_address: 172.30.0.11
     command: sleep infinity
-
+    cap_add:
+      - NET_ADMIN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
   attacker:
     image: kalilinux/kali-rolling
     container_name: attacker
