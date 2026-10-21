@@ -7,6 +7,7 @@ const NAMES = ["Node A (target)", "Node B (peer)", "Node C"];
 
 export default function ShieldLive() {
   const [s, setS] = useState({ status: "connecting..." });
+  const [det, setDet] = useState({ flagged: 0, kills: 0 });
 
   useEffect(() => {
     let alive = true;
@@ -52,6 +53,19 @@ export default function ShieldLive() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    async function poll() {
+      try {
+        const r = await fetch("/api/detector", { cache: "no-store" });
+        if (alive) setDet(await r.json());
+      } catch {}
+    }
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   if (s.status !== "live") {
     return <main style={{ padding: 24, fontFamily: "sans-serif" }}>Chain: {s.status}</main>;
   }
@@ -80,6 +94,16 @@ export default function ShieldLive() {
             <div style={{ fontSize: 12 }}>stake: {Number(n.stake) / 1e18} ETH</div>
           </div>
         ))}
+      </div>
+      <div style={{ display: "flex", gap: 16, marginTop: 24 }}>
+        <div style={{ background: det.flagged ? "#ef6c00" : "#455a64", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+          <strong>Files flagged</strong>
+          <div style={{ fontSize: 32 }}>{det.flagged}</div>
+        </div>
+        <div style={{ background: det.kills ? "#c62828" : "#455a64", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+          <strong>Kills triggered</strong>
+          <div style={{ fontSize: 32 }}>{det.kills}</div>
+        </div>
       </div>
       <h2 style={{ marginTop: 24 }}>
         Consensus tally: {s.count} of {s.n} reports ({s.k} needed)
