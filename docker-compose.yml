@@ -16,18 +16,20 @@ services:
       touch /var/log/auth.log && chown syslog:adm /var/log/auth.log && service ssh start && rsyslogd && sleep infinity"
 
   peer:
-    image: ubuntu:22.04
+    build:
+      context: .
+      dockerfile: network/Dockerfile.peer
     container_name: peer
-    tty: true
-    stdin_open: true
     networks:
       lab:
         ipv4_address: 172.30.0.11
-    command: sleep infinity
     cap_add:
       - NET_ADMIN
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deployments/localhost.json:/opt/shield/localhost.json:ro
+    restart: unless-stopped
   attacker:
     image: kalilinux/kali-rolling
     container_name: attacker
@@ -38,7 +40,7 @@ services:
         ipv4_address: 172.30.0.12
     command: >
       bash -c "apt-get update && apt-get install -y hydra iputils-ping openssh-client &&
-      printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt && sleep infinity"
+      (printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt || true) && sleep infinity"
 
 networks:
   lab:

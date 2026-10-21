@@ -6,3 +6,5 @@ blockchain/deployed.json
 __pycache__/
 *.pyc
 network/measurements.csv
+detector/tor_exit_nodes.txt
+__pycache__/
