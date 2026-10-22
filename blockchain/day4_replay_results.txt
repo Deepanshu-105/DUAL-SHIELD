@@ -1,0 +1,6 @@
+Replay of DictionaryBruteForce.pcap.csv (CIC-IoT-2023 layout; flow features only, no IP column)
+Each row gets a synthetic address in 198.18.0.0/15 and a fingerprint hashed from its features.
+Run 1: 10 rows, node A only: 10/10 reports ok, gas avg 164381 (max 164393), confirm avg 43.1 ms (max 81.1)
+Run 2: 10 rows (offset 10), first 2 also reported by node B: 12/12 ok, gas avg 155896 (max 164393),
+       confirm avg 43.7 ms (max 77.1). Confirming reports cost 113421 gas.
+Local Hardhat node (instant mining); not representative of a real network.
