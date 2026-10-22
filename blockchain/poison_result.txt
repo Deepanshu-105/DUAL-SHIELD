@@ -1,0 +1,2 @@
+after 1 report: count 1 k 2 confirmed false
+stake of node C after slash: 0
