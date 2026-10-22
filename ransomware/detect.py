@@ -33,18 +33,33 @@ def all_files(folder):
             p = os.path.join(root, n)
             yield p, os.path.relpath(p, folder)
 
+def read_block_at(path, off):
+    with open(path, "rb") as f:
+        f.seek(off)
+        return f.read(BLOCK)
+
+
 def build_baseline(folder):
     base = {}
     for p, rel in all_files(folder):
         head = read_head(p)
-        block = read_block(p)
-        chi2 = chi_square_bytes(block) if len(block) == BLOCK else None
+        size = os.path.getsize(p)
+        offs = sorted({0, max(0, (size - BLOCK) // 2), max(0, size - BLOCK)})
+        blocks = []
+        for off in offs:
+            data = read_block_at(p, off)
+            if len(data) == BLOCK:
+                c = chi_square_bytes(data)
+                blocks.append({"off": off, "chi2": c, "nonuniform": c > CHI_LIMIT})
+        first = blocks[0] if blocks and blocks[0]["off"] == 0 else None
         base[rel] = {
             "header": head.hex(),
-            "chi2": chi2,
-            "was_nonuniform": chi2 is not None and chi2 >= CHI_LIMIT,
+            "chi2": first["chi2"] if first else None,
+            "was_nonuniform": bool(first and first["nonuniform"]),
+            "blocks": blocks,
         }
     return base
+
 
 def check_file(path, rel, base):
     """Return (None, '') if fine, else ('A' or 'B', detail)."""
@@ -55,15 +70,20 @@ def check_file(path, rel, base):
         head = read_head(path)
         if head.hex() != b["header"] or not matches_extension(path, head):
             return "A", "header changed: %s -> %s" % (b["header"][:16], head.hex()[:16])
-        if b["was_nonuniform"]:
-            block = read_block(path)
-            if len(block) == BLOCK:
-                chi2 = chi_square_bytes(block)
-                if chi2 < CHI_LIMIT:
-                    return "B", "chi2 %.0f (was %.0f): looks uniform now" % (chi2, b["chi2"])
+        blocks = b.get("blocks")
+        if blocks is None:      # old baseline format: first block only
+            blocks = [{"off": 0, "chi2": b["chi2"], "nonuniform": b["was_nonuniform"]}]
+        for blk in blocks:
+            if blk["nonuniform"]:
+                data = read_block_at(path, blk["off"])
+                if len(data) == BLOCK:
+                    chi2 = chi_square_bytes(data)
+                    if chi2 < CHI_LIMIT:
+                        return "B", "chi2 %.0f at offset %d (was %.0f): looks uniform now" % (chi2, blk["off"], blk["chi2"])
     except FileNotFoundError:
         return None, ""
     return None, ""
+
 
 def scan(folder, base):
     flagged, total = [], 0
