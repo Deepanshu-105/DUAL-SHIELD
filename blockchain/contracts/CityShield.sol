@@ -86,4 +86,28 @@ contract CityShield {
             }
         }
     }
+
+    struct Recovery {
+        bytes32 merkleRoot;
+        uint256 tAttack;
+        bool anchored;
+    }
+    mapping(bytes32 => Recovery) private recoveries;
+
+    event CleanStateAnchored(string ip, bytes32 merkleRoot, uint256 tAttack);
+
+    // M3 calls this once rollback.py has restored and verified the clean state.
+    // merkleRoot comes from snapshot.py's output; tAttack is the detection timestamp.
+    function anchorCleanState(string calldata ip, bytes32 merkleRoot, uint256 tAttack) external {
+        bytes32 id = keccak256(bytes(ip));
+        require(stakes[msg.sender] > 0, "not staked");
+        recoveries[id] = Recovery({merkleRoot: merkleRoot, tAttack: tAttack, anchored: true});
+        emit CleanStateAnchored(ip, merkleRoot, tAttack);
+    }
+
+    // M4 dashboard reads this to show the anchored root and attack time for an IP.
+    function getRecovery(string calldata ip) external view returns (bytes32 merkleRoot, uint256 tAttack, bool anchored) {
+        Recovery storage r = recoveries[keccak256(bytes(ip))];
+        return (r.merkleRoot, r.tAttack, r.anchored);
+    }
 }
