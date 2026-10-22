@@ -1,0 +1,30 @@
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
+[HASSH] 172.30.0.12 -> 015322ee8471fa8338c558a918183b11
+[HASSH] 172.30.0.12 -> 015322ee8471fa8338c558a918183b11
+[HASSH] 172.30.0.12 -> 015322ee8471fa8338c558a918183b11
+[HASSH] 172.30.0.12 -> 015322ee8471fa8338c558a918183b11
+[HASSH] 172.30.0.12 -> 015322ee8471fa8338c558a918183b11
+[FAIL] 172.30.0.12 -> 1 failure(s) in last 5s  hassh=015322ee8471fa8338c558a918183b11  tor=yes
+[FAIL] 172.30.0.12 -> 2 failure(s) in last 5s  hassh=015322ee8471fa8338c558a918183b11  tor=yes
+[FAIL] 172.30.0.12 -> 3 failure(s) in last 5s  hassh=015322ee8471fa8338c558a918183b11  tor=yes
+METRIC drop_ms=15.146
+METRIC lookup_ms=0.004
+[PROFILE] 172.30.0.12 tor=True known_attack_tool=True
+[BLOCKED] 172.30.0.12 added to city_blacklist  hassh=015322ee8471fa8338c558a918183b11  tor=yes
+[PARSER_BLOCK] PARSER_BLOCK ip=172.30.0.12 ts=1792490448.816
+[WARN] chain report failed for 172.30.0.12: HTTPConnectionPool(host='host.docker.internal', port=8545): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='host.docker.internal', port=8545): Failed to establish a new connection: [Errno 111] Connection refused"))
+[FAIL] 172.30.0.12 -> 4 failure(s) in last 5s  hassh=015322ee8471fa8338c558a918183b11  tor=yes
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
+Watching /var/log/auth.log for failed SSH logins...
+Watching /var/log/auth.log for failed SSH logins...
+Watching /var/log/auth.log for failed SSH logins...
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
+[TOR] 1210 addresses loaded
+Watching /var/log/auth.log for failed SSH logins...
