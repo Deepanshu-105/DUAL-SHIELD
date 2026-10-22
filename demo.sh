@@ -1,9 +1,14 @@
 #!/bin/bash
 # Dual-Shield end-to-end demo: attack -> block -> immunise -> kill -> rollback
-cd "$(dirname "$0")/ransomware" || exit 1
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT/ransomware" || exit 1
+python3 -c "import cryptography, watchdog" 2>/dev/null || { echo "FAIL: python modules missing. Run deactivate (leave .venv) or pip3 install watchdog cryptography"; exit 1; }
 banner() { echo; echo "=============== $1 ==============="; sleep 2; }
 
 banner "RESET"
+docker exec target ipset flush city_blacklist 2>/dev/null
+docker exec peer ipset flush city_blacklist 2>/dev/null
+ATTACK_IP="203.0.113.$((RANDOM % 200 + 20))"
 : > evidence/watch.log
 python3 rollback.py snapshot data/sample || echo "WARN: snapshot failed"
 
@@ -16,11 +21,12 @@ banner "1. ATTACK (mock ransomware, --delay 0.5)"
 python3 mock_crypto.py --delay 0.5 || echo "attack process ended (killed or finished)"
 sleep 2
 
-banner "2. BLOCK (STUB: M1/M2 firewall step)"
-echo "STUB: block attacker IP 203.0.113.181"
+banner "2. BLOCK (target blocks, reports to chain)"
+echo "attacker IP: $ATTACK_IP"
+"$ROOT/network/block_immunise.sh" "$ATTACK_IP" | tee /tmp/block_immunise.out
 
-banner "3. IMMUNISE (STUB: M1/M2 peer broadcast)"
-echo "STUB: notify peer nodes B and C"
+banner "3. IMMUNISE (peer blocks after consensus)"
+docker exec peer ipset list city_blacklist | grep "$ATTACK_IP" && echo "IMMUNISED: peer blocks $ATTACK_IP" || echo "WARN: peer does not block $ATTACK_IP"
 
 banner "4. KILL (result from the watcher)"
 grep -E "KILL_TRIGGER|KILLED|KILL_NO_TARGET" evidence/watch.log || echo "no kill event found"
