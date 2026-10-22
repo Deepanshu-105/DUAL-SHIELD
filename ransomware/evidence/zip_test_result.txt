@@ -1,0 +1,1 @@
+Zip hard negative, Thu Oct 22 07:59:55 UTC 2026: 1 zip and 3 zips added as NEW files -> no FLAGGED, no KILL_TRIGGER. Overwriting EXISTING log1.txt with zip bytes -> FLAGGED (check A), 1 distinct file, no kill. Limit: new files without a baseline entry are not checked.

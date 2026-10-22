@@ -1,0 +1,29 @@
+Replay of Recon-PortScan.pcap.csv (CIC-IoT-2023 layout, synthetic IPs 198.18.0.0/15). Local Hardhat node, instant mining: not representative of a real network.
+row 0 198.18.0.1 node A gas=164381 confirm=148.7 ms block=12
+row 1 198.18.0.2 node A gas=164381 confirm=73.6 ms block=13
+row 2 198.18.0.3 node A gas=164381 confirm=72.7 ms block=14
+row 3 198.18.0.4 node A gas=164381 confirm=74.1 ms block=15
+row 4 198.18.0.5 node A gas=164381 confirm=68.8 ms block=16
+row 5 198.18.0.6 node A gas=164381 confirm=72.0 ms block=17
+row 6 198.18.0.7 node A gas=164381 confirm=60.4 ms block=18
+row 7 198.18.0.8 node A gas=164381 confirm=55.8 ms block=19
+row 8 198.18.0.9 node A gas=164381 confirm=60.1 ms block=20
+row 9 198.18.0.10 node A gas=164393 confirm=57.1 ms block=21
+RESULT label=Recon-PortScan rows=10 reports_ok=10 skipped=0
+RESULT gas_avg=164382 gas_max=164393 confirm_avg=74.3 ms confirm_max=148.7 ms
+details: /home/vinit/DUAL-SHIELD/blockchain/results/replay_1792657609.csv
+row 10 198.18.0.11 node A gas=164393 confirm=67.4 ms block=22
+row 10 198.18.0.11 node B gas=113421 confirm=75.2 ms block=23
+row 11 198.18.0.12 node A gas=164381 confirm=70.3 ms block=24
+row 11 198.18.0.12 node B gas=113409 confirm=70.8 ms block=25
+row 12 198.18.0.13 node A gas=164393 confirm=68.5 ms block=26
+row 13 198.18.0.14 node A gas=164393 confirm=65.9 ms block=27
+row 14 198.18.0.15 node A gas=164393 confirm=65.6 ms block=28
+row 15 198.18.0.16 node A gas=164369 confirm=65.6 ms block=29
+row 16 198.18.0.17 node A gas=164393 confirm=69.3 ms block=30
+row 17 198.18.0.18 node A gas=164393 confirm=71.0 ms block=31
+row 18 198.18.0.19 node A gas=164381 confirm=71.1 ms block=32
+row 19 198.18.0.20 node A gas=164393 confirm=66.3 ms block=33
+RESULT label=Recon-PortScan rows=10 reports_ok=12 skipped=0
+RESULT gas_avg=155892 gas_max=164393 confirm_avg=68.9 ms confirm_max=75.2 ms
+details: /home/vinit/DUAL-SHIELD/blockchain/results/replay_1792657611.csv
