@@ -55,10 +55,37 @@ def ensure_firewall():
         subprocess.run(["iptables", "-I", *rule], check=True)
 
 
+TOR_FILES = [os.environ.get("TOR_LIST", "/root/detector/tor_exit_nodes.txt"),
+             os.environ.get("TOR_LIST_EXTRA", "/root/detector/tor_lab_test.txt")]
+# HASSH value your own lab captured from Hydra. Not a public list.
+BAD_HASSH = set(filter(None, os.environ.get(
+    "BAD_HASSH", "015322ee8471fa8338c558a918183b11").split(",")))
+METRICS = os.environ.get("METRICS_LOG", "/var/log/metrics.log")
+tor_ips = set()
+
+
+def load_tor():
+    for path in TOR_FILES:
+        try:
+            with open(path) as f:
+                tor_ips.update(l.strip() for l in f if l.strip() and not l.startswith("#"))
+        except OSError as e:
+            print(f"[WARN] Tor list {path} not loaded: {e}", flush=True)
+    print(f"[TOR] {len(tor_ips)} addresses loaded", flush=True)
+
+
+def metric(name, ms):
+    line = f"METRIC {name}={ms:.3f}"
+    print(line, flush=True)
+    with open(METRICS, "a") as f:
+        f.write(line + "\n")
+
+
 def tag(ip):
     """Text appended to log lines: the client fingerprint, if we have seen one."""
     h = fingerprints.get(ip)
-    return f"  hassh={h}" if h else ""
+    extra = "  tor=yes" if ip in tor_ips else ""
+    return (f"  hassh={h}" if h else "") + extra
 
 
 def report_async(ip):
@@ -79,13 +106,21 @@ def report_async(ip):
     threading.Thread(target=run, daemon=True).start()
 
 
-def block_ip(ip):
+def block_ip(ip, t_detect=None):
     if ip in WHITELIST or ip in blocked_ips:
         return
     try:
         subprocess.run(["ipset", "add", IPSET_NAME, ip, "-exist"],
                        check=True, capture_output=True, text=True)
         blocked_ips.add(ip)
+        if t_detect is not None:
+            metric("drop_ms", (time.perf_counter() - t_detect) * 1000)
+        t1 = time.perf_counter()
+        is_tor = ip in tor_ips
+        bad_tool = fingerprints.get(ip) in BAD_HASSH
+        metric("lookup_ms", (time.perf_counter() - t1) * 1000)
+        if is_tor or bad_tool:
+            print(f"[PROFILE] {ip} tor={is_tor} known_attack_tool={bad_tool}", flush=True)
         print(f"[BLOCKED] {ip} added to {IPSET_NAME}{tag(ip)}", flush=True)
         ts = time.time()
         line = f"PARSER_BLOCK ip={ip} ts={ts:.3f}"
@@ -109,7 +144,7 @@ def record_failure(ip):
         times.popleft()
     print(f"[FAIL] {ip} -> {len(times)} failure(s) in last {WINDOW}s{tag(ip)}", flush=True)
     if len(times) >= THRESHOLD:
-        block_ip(ip)
+        block_ip(ip, time.perf_counter())
 
 
 def tail_log(path):
@@ -121,7 +156,7 @@ def tail_log(path):
         while True:
             line = f.readline()
             if not line:
-                time.sleep(0.2)
+                time.sleep(0.02)
                 continue
             yield line
 
@@ -146,6 +181,7 @@ def start_sniffer():
 def main():
     ensure_firewall()
     start_sniffer()
+    load_tor()
     print(f"Watching {LOG_PATH} for failed SSH logins...", flush=True)
     for line in tail_log(LOG_PATH):
         match = FAIL_PATTERN.search(line)
