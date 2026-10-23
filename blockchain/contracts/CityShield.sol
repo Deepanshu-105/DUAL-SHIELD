@@ -26,16 +26,6 @@ contract CityShield {
     event ThreatConsensusReached(string ip, bytes32 ja3, uint count);
     event NodeSlashed(address indexed node, string ip, uint amount);
 
-    // Recovery anchor: proves which snapshot was clean and when the attack began.
-    struct Recovery {
-        bytes32 cleanHash;   // hash of the pre-attack snapshot manifest
-        uint tAttack;        // attack time, microseconds since epoch
-        address node;        // who anchored it
-        uint anchoredAt;     // block timestamp
-    }
-    Recovery[] private recoveries;
-    event RecoveryAnchored(address indexed node, bytes32 cleanHash, uint tAttack, uint index);
-
     function registerNode() external payable {
         require(msg.value == STAKE, "send exactly STAKE");
         require(stakes[msg.sender] == 0, "already registered");
@@ -74,24 +64,6 @@ contract CityShield {
     {
         Threat storage t = threats[keccak256(bytes(ip))];
         return (t.count, K, t.confirmed);
-    }
-
-    function anchorRecovery(bytes32 cleanHash, uint tAttack) external {
-        require(stakes[msg.sender] > 0, "not staked");
-        recoveries.push(Recovery(cleanHash, tAttack, msg.sender, block.timestamp));
-        emit RecoveryAnchored(msg.sender, cleanHash, tAttack, recoveries.length - 1);
-    }
-
-    function recoveryCount() external view returns (uint) {
-        return recoveries.length;
-    }
-
-    function getRecovery(uint i)
-        external view returns (bytes32 cleanHash, uint tAttack, address node, uint anchoredAt)
-    {
-        require(i < recoveries.length, "no such recovery");
-        Recovery storage r = recoveries[i];
-        return (r.cleanHash, r.tAttack, r.node, r.anchoredAt);
     }
 
     // A threat that never got a 2nd report in time counts as a false report.

@@ -5,19 +5,19 @@ CityShield contract (Solidity 0.8, Hardhat local chain, ethers v6 / web3.py).
 - Consensus: an IP is confirmed as a threat when K = 2 of N = 3 registered nodes report it.
 - Registration: each node stakes 1 ether (`registerNode`).
 - Poisoning defence: a report window of 60 s; if the second report does not arrive in time, `slashExpired(ip)` slashes the lone reporter's stake.
-- Recovery anchoring: `anchorRecovery` (global) and `anchorCleanState(ip, merkleRoot, tAttack)` / `getCleanState(ip)` (per IP). The Merkle root comes from `ransomware/snapshot.py`.
-- Events: ThreatReported, ThreatConsensusReached, NodeSlashed, RecoveryAnchored, CleanStateAnchored.
+- Clean-state anchoring: `anchorCleanState(ip, merkleRoot, tAttack)` / `getCleanState(ip)` (per IP). The Merkle root comes from `ransomware/snapshot.py`.
+- Events: ThreatReported, ThreatConsensusReached, NodeSlashed, CleanStateAnchored.
 
 ## 2. Gas per operation (measured)
 | Operation | Gas |
 |---|---|
-| registerNode (stake 1 ETH, once per node) | 65,845 |
+| registerNode (stake 1 ETH, once per node) | 65,800 |
 | reportThreat, first report for an IP | 164,381 to 164,393 |
 | reportThreat, second report (consensus) | 113,409 to 113,421 |
 | Whole consensus for one IP (two reports) | about 277,800 |
-| slashExpired (lone reporter slashed) | 79,636 |
-| anchorRecovery (global) | 138,131 |
+| slashExpired (lone reporter slashed) | 79,613 |
 | anchorCleanState (per IP, 32-byte root) | 94,939 |
+Fresh-chain figures are from `blockchain/gas_report.txt` (they vary by under 0.1% between runs).
 Source: replay of Recon-PortScan (10 reports, gas_avg 164,382, max 164,393) and day 5 anchor tests.
 
 ## 3. Latency
@@ -40,6 +40,5 @@ Recon-PortScan and DictionaryBruteForce CSVs (CIC-IoT-2023 layout) replayed as c
 - Local chain with instant mining; no real block time or network delay.
 - The second node report is simulated (COREPORT=1) in the lab.
 - `tAttack` is the time of the anchor call, not the exact attack start.
-- Two anchor mechanisms exist (global and per IP); one will be removed on Day 7.
 - Gas is reported in units, not currency; ether cost depends on the target chain.
 - Gas figures come from `blockchain/scripts/gas_report.js` (fresh chain), plus the lab replay.

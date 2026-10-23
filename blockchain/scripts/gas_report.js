@@ -27,7 +27,6 @@ async function main() {
   rows.push(["slashExpired (lone reporter slashed)", await gas(s.connect(deployer).slashExpired("203.0.113.2"))]);
 
   const root = ethers.keccak256(ethers.toUtf8Bytes("clean"));
-  rows.push(["anchorRecovery (global)", await gas(s.connect(a).anchorRecovery(root, 1700000000))]);
   rows.push(["anchorCleanState (per IP)", await gas(s.connect(a).anchorCleanState("172.30.0.12", root, 1700000000))]);
 
   console.log("operation | gas");
