@@ -30,6 +30,7 @@ export async function GET() {
       if (m) ev.push({ ts: Number(m[2]), layer: 1, kind: "BLOCK", text: verb + ": " + m[1] });
     }
   }
-  ev.sort((a, b) => b.ts - a.ts);
-  return Response.json(ev.slice(0, 20));
+  const clean = ev.filter((x) => !/203\.0\.113\.1(?!\d)/.test(x.text) && !/198\.51\.100\./.test(x.text));   // hide the warm-up IP
+  clean.sort((a, b) => b.ts - a.ts);
+  return Response.json(clean.slice(0, 20));
 }
