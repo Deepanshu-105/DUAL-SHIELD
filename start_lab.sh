@@ -14,7 +14,7 @@ npx hardhat run scripts/deploy.js --network localhost || { echo "FAIL: deploy"; 
 cd "$ROOT"
 cp deployments/localhost.json dashboard/public/localhost.json
 docker compose rm -sf peer >/dev/null 2>&1   # fresh peer avoids stale localhost.json mount
-docker compose up -d
+docker compose up -d --build
 docker cp deployments/localhost.json target:/opt/shield/localhost.json
 docker compose up -d --force-recreate peer >/dev/null 2>&1
 docker exec target pkill -f ssh_parser.py 2>/dev/null
