@@ -1,0 +1,9 @@
+M1 Day 6 source-IP check (real Hydra from attacker container to target)
+Oct 23 10:23:25 2b8e39d62399 sshd[3520]: Failed password for testuser from 172.30.0.12 port 33384 ssh2
+Oct 23 10:23:25 2b8e39d62399 sshd[3523]: Failed password for testuser from 172.30.0.12 port 33394 ssh2
+Oct 23 10:23:25 2b8e39d62399 sshd[3521]: Failed password for testuser from 172.30.0.12 port 33392 ssh2
+--- ipset city_blacklist:
+Members:
+172.30.0.12
+--- parser_block.log:
+PARSER_BLOCK ip=172.30.0.12 ts=1792751005.537

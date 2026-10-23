@@ -1,0 +1,2 @@
+RESULT runs=10 local_drop_avg=3.85 ms (max 7.80, target <20) lookup_avg=0.0023 ms (max 0.0045, target <2) tor_entries=1210 tor_load=3.0 ms
+PASS
