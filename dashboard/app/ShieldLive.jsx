@@ -8,6 +8,10 @@ const NAMES = ["Node A (target)", "Node B (peer)", "Node C"];
 export default function ShieldLive() {
   const [s, setS] = useState({ status: "connecting..." });
   const [det, setDet] = useState({ flagged: 0, kills: 0 });
+  const [blk, setBlk] = useState({});
+  const [tl, setTl] = useState([]);
+  const [rb, setRb] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -66,6 +70,34 @@ export default function ShieldLive() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    async function poll() {
+      try {
+        const [b, l] = await Promise.all([
+          fetch("/api/blocked", { cache: "no-store" }).then((r) => r.json()),
+          fetch("/api/timeline", { cache: "no-store" }).then((r) => r.json()),
+        ]);
+        if (alive) { setBlk(b); setTl(l); }
+      } catch {}
+    }
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  async function doRollback() {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/rollback", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ip: "172.30.0.12" }),
+      });
+      setRb(await r.json());
+    } catch (e) { setRb({ ok: false, output: String(e) }); }
+    setBusy(false);
+  }
+
   if (s.status !== "live") {
     return <main style={{ padding: 24, fontFamily: "sans-serif" }}>Chain: {s.status}</main>;
   }
@@ -84,7 +116,15 @@ export default function ShieldLive() {
 
   return (
     <main style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>Dual-Shield: Layer 1</h1>
+      <h1>Dual-Shield</h1>
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ background: s.confirmed ? "#c62828" : "#2e7d32", color: "#fff", padding: "8px 14px", borderRadius: 20 }}>
+          Layer 1 (network + chain): {s.confirmed ? "THREAT CONFIRMED" : "monitoring"}
+        </div>
+        <div style={{ background: det.kills ? "#c62828" : "#2e7d32", color: "#fff", padding: "8px 14px", borderRadius: 20 }}>
+          Layer 2 (ransomware): {det.kills ? "ATTACK STOPPED (" + det.kills + " kill)" : "monitoring"}
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         {s.nodes.map((n, i) => (
           <div key={n.addr} style={{ background: colour(n), color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
@@ -110,6 +150,35 @@ export default function ShieldLive() {
         {s.confirmed ? "  CONFIRMED" : ""}
       </h2>
       <div>Latest reported IP: {s.ip ?? "none yet"}</div>
+      <div style={{ display: "flex", gap: 16, marginTop: 24, flexWrap: "wrap" }}>
+        {["target", "peer"].map((n) => (
+          <div key={n} style={{ background: "#37474f", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+            <strong>Blocked on {n}</strong>
+            <div style={{ fontSize: 32 }}>{blk[n] ? blk[n].length : "n/a"}</div>
+            <div style={{ fontSize: 12 }}>{blk[n] ? blk[n].slice(0, 4).join(", ") : "container not running"}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 24 }}>
+        <button onClick={doRollback} disabled={busy}
+          style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#1565c0", color: "#fff", fontSize: 16, cursor: "pointer" }}>
+          {busy ? "Restoring..." : "Roll back to clean state"}
+        </button>
+        {rb && (
+          <pre style={{ background: rb.ok ? "#e8f5e9" : "#ffebee", color: "#111", padding: 12, borderRadius: 8, marginTop: 12, whiteSpace: "pre-wrap" }}>
+            {(rb.ok ? "ROLLED BACK" : "REFUSED / FAILED") + " (" + rb.ms + " ms)\n" + rb.output}
+          </pre>
+        )}
+      </div>
+      <h2 style={{ marginTop: 24 }}>Event timeline</h2>
+      <div style={{ fontFamily: "monospace", fontSize: 13 }}>
+        {tl.length === 0 && <div>no events yet</div>}
+        {tl.map((e, i) => (
+          <div key={i} style={{ padding: "3px 0" }}>
+            {new Date(e.ts * 1000).toLocaleTimeString()}  L{e.layer}  {e.text}
+          </div>
+        ))}
+      </div>
     </main>
   );
 }
