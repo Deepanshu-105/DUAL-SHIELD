@@ -13,6 +13,7 @@ rpc || { echo "FAIL: chain not reachable"; exit 1; }
 npx hardhat run scripts/deploy.js --network localhost || { echo "FAIL: deploy"; exit 1; }
 cd "$ROOT"
 cp deployments/localhost.json dashboard/public/localhost.json
+docker compose rm -sf peer >/dev/null 2>&1   # fresh peer avoids stale localhost.json mount
 docker compose up -d
 docker cp deployments/localhost.json target:/opt/shield/localhost.json
 docker compose up -d --force-recreate peer >/dev/null 2>&1
