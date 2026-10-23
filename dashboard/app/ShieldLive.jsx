@@ -4,6 +4,8 @@ import { JsonRpcProvider, Contract } from "ethers";
 
 const RPC = "http://127.0.0.1:8545";
 const NAMES = ["Node A (target)", "Node B (peer)", "Node C"];
+const WARMUP = "203.0.113.1";   // start_lab.sh warm-up report: not a real attack
+const real = (l) => (l ? l.filter((i) => i !== WARMUP) : null);
 
 export default function ShieldLive() {
   const [s, setS] = useState({ status: "connecting..." });
@@ -12,6 +14,7 @@ export default function ShieldLive() {
   const [tl, setTl] = useState([]);
   const [rb, setRb] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [mx, setMx] = useState([]);
 
   useEffect(() => {
     let alive = true;
@@ -30,7 +33,7 @@ export default function ShieldLive() {
         if (!contract) await init();
         const k = Number(await contract.K());
         const n = Number(await contract.nodeCount());
-        const events = await contract.queryFilter(contract.filters.ThreatReported(), 0);
+        const events = (await contract.queryFilter(contract.filters.ThreatReported(), 0)).filter((e) => e.args.ip !== WARMUP);
         const ip = events.length ? events[events.length - 1].args.ip : null;
         const [count, , confirmed] = ip
           ? await contract.getTally(ip)
@@ -84,6 +87,10 @@ export default function ShieldLive() {
     poll();
     const id = setInterval(poll, 2000);
     return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  useEffect(() => {
+    fetch("/metrics.json", { cache: "no-store" }).then((r) => r.json()).then(setMx).catch(() => {});
   }, []);
 
   async function doRollback() {
@@ -154,8 +161,8 @@ export default function ShieldLive() {
         {["target", "peer"].map((n) => (
           <div key={n} style={{ background: "#37474f", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
             <strong>Blocked on {n}</strong>
-            <div style={{ fontSize: 32 }}>{blk[n] ? blk[n].length : "n/a"}</div>
-            <div style={{ fontSize: 12 }}>{blk[n] ? blk[n].slice(0, 4).join(", ") : "container not running"}</div>
+            <div style={{ fontSize: 32 }}>{real(blk[n]) ? real(blk[n]).length : "n/a"}</div>
+            <div style={{ fontSize: 12 }}>{real(blk[n]) ? real(blk[n]).slice(0, 4).join(", ") : "container not running"}</div>
           </div>
         ))}
       </div>
@@ -169,6 +176,16 @@ export default function ShieldLive() {
             {(rb.ok ? "ROLLED BACK" : "REFUSED / FAILED") + " (" + rb.ms + " ms)\n" + rb.output}
           </pre>
         )}
+      </div>
+      <h2 style={{ marginTop: 24 }}>Measured performance</h2>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {mx.map((m) => (
+          <div key={m.label} style={{ background: "#263238", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+            <div style={{ fontSize: 24 }}>{m.value}</div>
+            <div style={{ fontSize: 11, opacity: 0.7 }}>{m.note}</div>
+          </div>
+        ))}
       </div>
       <h2 style={{ marginTop: 24 }}>Event timeline</h2>
       <div style={{ fontFamily: "monospace", fontSize: 13 }}>
