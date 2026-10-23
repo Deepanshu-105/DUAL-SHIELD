@@ -90,6 +90,13 @@ if __name__ == "__main__":
     if cmd == "snapshot":
         take_snapshot(folder)
     elif cmd == "restore":
+        if "--anchor" in sys.argv:   # refuse to restore from a snapshot that does not match the chain
+            import subprocess
+            ip = sys.argv[sys.argv.index("--anchor") + 1]
+            va = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "blockchain", "scripts", "verify_anchor.py")
+            r = subprocess.run([sys.executable, va, ip, STORE])
+            if r.returncode != 0:
+                sys.exit("RESTORE_REFUSED: stored snapshot does not match the on-chain clean state")
         restore(folder)
         sys.exit(0 if verify(folder)[0] else 1)
     elif cmd == "verify":

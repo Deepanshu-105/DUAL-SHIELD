@@ -1,0 +1,4 @@
+M2 Day 6: rollback verified against on-chain clean state (anchorCleanState / getCleanState)
+clean root anchored for 172.30.0.12, gas used 94939
+clean snapshot  : ANCHOR_MATCH, RESTORED 10 files in 15 ms, ROLLBACK_OK 10 of 10
+tampered snapshot: ANCHOR_TAMPERED, RESTORE_REFUSED (restore blocked before any file is copied)
