@@ -1,0 +1,25 @@
+--- run 1
+PASS peer blocked 203.0.113.201 in 1572 ms
+1792755483.505502 KILL_TRIGGER distinct_files=3
+1792755483.505582 KILLED pid=28476 (open-file)
+RESTORED 10 files, removed 0 extra, 2 ms
+--- run 2
+PASS peer blocked 203.0.113.92 in 1320 ms
+1792755506.670581 KILL_TRIGGER distinct_files=3
+1792755506.670802 KILLED pid=28567 (open-file)
+RESTORED 10 files, removed 0 extra, 3 ms
+--- run 3
+PASS peer blocked 203.0.113.133 in 1228 ms
+1792755529.588279 KILL_TRIGGER distinct_files=3
+1792755529.588349 KILLED pid=28710 (open-file)
+RESTORED 10 files, removed 0 extra, 3 ms
+--- run 4
+PASS peer blocked 203.0.113.129 in 1235 ms
+1792755552.470015 KILL_TRIGGER distinct_files=3
+1792755552.470108 KILLED pid=28804 (open-file)
+RESTORED 10 files, removed 0 extra, 2 ms
+--- run 5
+PASS peer blocked 203.0.113.106 in 1224 ms
+1792755575.289866 KILL_TRIGGER distinct_files=3
+1792755575.289984 KILLED pid=28898 (open-file)
+RESTORED 10 files, removed 0 extra, 2 ms
