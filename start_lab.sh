@@ -25,4 +25,7 @@ sleep 5
 docker exec target sh -c "which pkill >/dev/null || (apt-get update -qq && apt-get install -y -qq procps >/dev/null 2>&1)"
 docker exec attacker sh -c "which pkill >/dev/null && which python3 >/dev/null || (apt-get update -qq && apt-get install -y -qq procps python3 >/dev/null 2>&1)"
 "$ROOT/network/block_immunise.sh" 203.0.113.1 >/dev/null 2>&1   # warm-up: the first report is slow
+# anchor the clean snapshot on the fresh chain (the dashboard rollback checks it)
+"$ROOT/blockchain/scripts/anchor_clean.sh" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback button will say ANCHOR_MISSING)"
+
 echo "LAB READY. Start the dashboard in another terminal: cd dashboard && npm run dev"
