@@ -1,0 +1,7 @@
+operation | gas
+registerNode (stake 1 ETH) | 65845
+reportThreat, first report | 164438
+reportThreat, second report (consensus) | 113466
+slashExpired (lone reporter slashed) | 79636
+anchorRecovery (global) | 138083
+anchorCleanState (per IP) | 94927

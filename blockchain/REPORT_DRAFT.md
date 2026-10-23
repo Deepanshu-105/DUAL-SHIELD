@@ -11,9 +11,11 @@ CityShield contract (Solidity 0.8, Hardhat local chain, ethers v6 / web3.py).
 ## 2. Gas per operation (measured)
 | Operation | Gas |
 |---|---|
+| registerNode (stake 1 ETH, once per node) | 65,845 |
 | reportThreat, first report for an IP | 164,381 to 164,393 |
 | reportThreat, second report (consensus) | 113,409 to 113,421 |
 | Whole consensus for one IP (two reports) | about 277,800 |
+| slashExpired (lone reporter slashed) | 79,636 |
 | anchorRecovery (global) | 138,131 |
 | anchorCleanState (per IP, 32-byte root) | 94,939 |
 Source: replay of Recon-PortScan (10 reports, gas_avg 164,382, max 164,393) and day 5 anchor tests.
@@ -40,4 +42,4 @@ Recon-PortScan and DictionaryBruteForce CSVs (CIC-IoT-2023 layout) replayed as c
 - `tAttack` is the time of the anchor call, not the exact attack start.
 - Two anchor mechanisms exist (global and per IP); one will be removed on Day 7.
 - Gas is reported in units, not currency; ether cost depends on the target chain.
-- TODO measure: slash gas, gas of `registerNode`, anchor call latency.
+- Gas figures come from `blockchain/scripts/gas_report.js` (fresh chain), plus the lab replay.
