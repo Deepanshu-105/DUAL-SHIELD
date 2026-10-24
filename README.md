@@ -33,6 +33,10 @@ pip install watchdog cryptography      # add --break-system-packages if pip asks
 (cd blockchain && npm install)
 (cd dashboard && npm install)
 ```
+## Requirements
+- Node.js 22 or later (`nvm install 22 && nvm use 22`)
+- Docker and Docker Compose
+- Python 3.10+
 
 ## Run the demo
 1. **Start the lab** (Hardhat chain, contract, three containers, clean snapshot anchored on-chain):
