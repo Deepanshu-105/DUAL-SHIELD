@@ -65,6 +65,7 @@ docker exec target ipset list city_blacklist      # 172.30.0.12 is now blocked
 ```bash
 (cd blockchain && npx hardhat test)               # 6 passing
 (cd blockchain && npx hardhat run scripts/gas_report.js)
+(cd blockchain && npx hardhat run scripts/poison_test.js --network localhost)   # lab must be running; a lone report cannot confirm a threat and the reporter is slashed. Run ./start_lab.sh afterwards to reset the chain
 docker exec target python3 /root/detector/bench.py 10
 bash network/real_runs.sh 5
 bash detector/test_whitelist.sh
