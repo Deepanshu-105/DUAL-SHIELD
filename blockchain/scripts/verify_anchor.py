@@ -9,7 +9,7 @@ import snapshot as snap   # same root rule as the anchored value
 
 ip, folder = sys.argv[1], sys.argv[2]
 dep = json.load(open(os.path.join(HERE, "..", "..", "deployments", "localhost.json")))
-w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
+w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
 c = w3.eth.contract(address=dep["address"], abi=dep["abi"])
 
 local = snap.snapshot(folder)["root"]

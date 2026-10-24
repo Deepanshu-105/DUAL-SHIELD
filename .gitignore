@@ -9,3 +9,5 @@ network/measurements.csv
 detector/tor_exit_nodes.txt
 __pycache__/
 blockchain/data/*.csv
+
+multi/config.env

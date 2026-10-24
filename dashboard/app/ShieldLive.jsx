@@ -98,7 +98,7 @@ export default function ShieldLive() {
     try {
       const r = await fetch("/api/rollback", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ip: "172.30.0.12" }),
+        body: JSON.stringify({}),   // the server picks the IP (ATTACKER_IP, default 172.30.0.12)
       });
       setRb(await r.json());
     } catch (e) { setRb({ ok: false, output: String(e) }); }

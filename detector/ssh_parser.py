@@ -35,6 +35,8 @@ WINDOW = 5      # ... inside this many seconds
 
 # Never block these: the SOC host (the Docker bridge gateway) and the peer node.
 WHITELIST = {"172.30.0.1", "172.30.0.11"}
+# Four-laptop mode: the dashboard and peer laptops are added through WHITELIST_EXTRA="ip1,ip2".
+WHITELIST |= {x.strip() for x in os.environ.get("WHITELIST_EXTRA", "").split(",") if x.strip()}
 
 FAIL_PATTERN = re.compile(
     r"Failed password for (?:invalid user )?\S+ from (\d{1,3}(?:\.\d{1,3}){3})"

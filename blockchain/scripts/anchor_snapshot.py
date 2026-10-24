@@ -4,7 +4,7 @@ from web3 import Web3
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEP = json.load(open(f"{HERE}/../deployments/localhost.json"))
 
-w3 = Web3(Web3.HTTPProvider(dep := "http://127.0.0.1:8545"))
+w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
 contract = w3.eth.contract(address=DEP["address"], abi=DEP["abi"])
 
 ip = sys.argv[1] if len(sys.argv) > 1 else "172.30.0.12"

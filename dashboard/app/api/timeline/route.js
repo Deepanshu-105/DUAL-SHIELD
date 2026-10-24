@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
+import { MULTI, agentLog } from "../../../lib/agent.js";
 
 function containerLines(name, file) {
   try {
@@ -12,7 +13,8 @@ export async function GET() {
   const ev = [];
   // Layer 2: ransomware detector (host file)
   let text = "";
-  try { text = fs.readFileSync(path.join(process.cwd(), "..", "ransomware/evidence/watch.log"), "utf8"); } catch {}
+  if (MULTI) text = (await agentLog("target", "watch", 60)).join("\n");
+  else { try { text = fs.readFileSync(path.join(process.cwd(), "..", "ransomware/evidence/watch.log"), "utf8"); } catch {} }
   for (const l of text.split("\n").slice(-60)) {
     const m = l.match(/^(\d+\.\d+)\s+(FLAGGED|KILL_TRIGGER|KILLED)\s*(.*)$/);
     if (!m) continue;
@@ -25,7 +27,8 @@ export async function GET() {
     ["target", "/var/log/parser_block.log", /PARSER_BLOCK ip=(\S+) ts=([\d.]+)/, "Blocked on target"],
     ["peer", "/var/log/peer_block.log", /PEER_BLOCK ip=(\S+) ts=([\d.]+)/, "Immunised on peer"],
   ]) {
-    for (const l of containerLines(name, file)) {
+    const lines = MULTI ? await agentLog(name, name === "target" ? "parser_block" : "peer_block", 20) : containerLines(name, file);
+    for (const l of lines) {
       const m = l.match(re);
       if (m) ev.push({ ts: Number(m[2]), layer: 1, kind: "BLOCK", text: verb + ": " + m[1] });
     }
