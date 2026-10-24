@@ -39,6 +39,7 @@ pip install watchdog cryptography      # add --break-system-packages if pip asks
    ```bash
    ./start_lab.sh
    ```
+   The first start builds the container images and takes 2 to 4 minutes; later starts take about 20 seconds.
    Expected: `LAB READY` and no `WARN` line. The demo files in `ransomware/data/` are created automatically.
 2. **Start the dashboard** in another terminal:
    ```bash
