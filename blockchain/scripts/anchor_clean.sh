@@ -9,10 +9,10 @@ cd "$ROOT_DIR/ransomware"
 ROOT=$("$PY" -c "import snapshot; print(snapshot.snapshot('data/snapshot')['root'])")
 cd "$ROOT_DIR"
 "$PY" - << PYEOF
-import json
+import json, os
 from web3 import Web3
 dep = json.load(open("deployments/localhost.json"))
-w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
+w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
 c = w3.eth.contract(address=dep["address"], abi=dep["abi"])
 a = w3.eth.accounts[0]
 if c.functions.stakes(a).call() == 0:

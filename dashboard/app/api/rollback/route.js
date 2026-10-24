@@ -1,11 +1,21 @@
 import { execFileSync } from "child_process";
 import path from "path";
+import { MULTI, agent } from "../../../lib/agent.js";
 
 // POST /api/rollback  {ip?}  -> restores data/sample_copy from the clean snapshot,
 // but only if its Merkle root matches the root anchored on-chain for that IP.
 export async function POST(req) {
   const body = await req.json().catch(() => ({}));
-  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : "172.30.0.12";
+  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : (process.env.ATTACKER_IP || "172.30.0.12");
+  if (MULTI) {   // four-laptop mode: laptop T restores its own folder and checks the chain
+    const t0m = Date.now();
+    try {
+      const r = await agent("target", "/rollback", { method: "POST", body: JSON.stringify({ ip }), timeout: 60000 });
+      return Response.json({ ok: !!r.ok, ip, ms: Date.now() - t0m, output: r.output || "" });
+    } catch (e) {
+      return Response.json({ ok: false, ip, ms: Date.now() - t0m, output: "target agent not reachable: " + e.message });
+    }
+  }
   const root = path.join(process.cwd(), "..");
   const py = path.join(root, "blockchain", ".venv", "bin", "python3");
   const t0 = Date.now();

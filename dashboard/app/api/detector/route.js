@@ -1,10 +1,15 @@
 import fs from "fs";
 import path from "path";
+import { MULTI, agentLog } from "../../../lib/agent.js";
 
 export async function GET() {
-  const log = path.join(process.cwd(), "..", "ransomware/evidence/watch.log");
   let text = "";
-  try { text = fs.readFileSync(log, "utf8"); } catch {}
+  if (MULTI) {
+    text = (await agentLog("target", "watch", 500)).join("\n");   // watch.log lives on laptop T
+  } else {
+    const log = path.join(process.cwd(), "..", "ransomware/evidence/watch.log");
+    try { text = fs.readFileSync(log, "utf8"); } catch {}
+  }
   const lines = text.split("\n");
   const files = new Set(
     lines.filter(l => l.includes(" FLAGGED ")).map(l => l.split(/\s+/)[4])
