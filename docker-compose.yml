@@ -1,17 +1,18 @@
 services:
   target:
-    image: ubuntu:22.04
+    build:
+      context: .
+      dockerfile: network/Dockerfile.target
     container_name: target
     cap_add: [NET_ADMIN]
     volumes:
       - ./detector:/root/detector
+      - ./network/chain_report.py:/opt/shield/chain_report.py:ro
     networks:
       lab:
         ipv4_address: 172.30.0.10
     command: >
-      bash -c "apt-get update &&
-      DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server rsyslog ipset iptables python3 &&
-      (id testuser || (useradd -m testuser && echo 'testuser:password123' | chpasswd)) &&
+      bash -c "(id testuser || (useradd -m testuser && echo 'testuser:password123' | chpasswd)) &&
       echo 'auth,authpriv.* /var/log/auth.log' > /etc/rsyslog.d/50-default.conf &&
       touch /var/log/auth.log && chown syslog:adm /var/log/auth.log && service ssh start && rsyslogd && sleep infinity"
 
