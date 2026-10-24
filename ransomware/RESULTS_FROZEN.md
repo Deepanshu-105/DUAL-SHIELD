@@ -36,3 +36,8 @@ How to read this:
 - The baseline covers one protected folder (data/sample_copy), not a whole disk.
 - The attack is a mock (mock_crypto.py) run on copies, in an isolated lab.
 - Possible improvement: a header-aware allow-list for known benign rewrites (zip, gz), so check A flags fewer legitimate edits.
+
+## Decision (Day 8)
+The check A improvement (allow-list for benign header rewrites such as zip and gz) is not implemented.
+It stays a documented limit: the false-positive table above is the measured result of the final detector,
+and any change to the detector would require re-running every number and the demo recording.
