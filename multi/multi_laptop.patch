@@ -1,0 +1,683 @@
+diff --git a/.gitignore b/.gitignore
+index 728ebd5..f0de737 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,3 +9,5 @@ network/measurements.csv
+ detector/tor_exit_nodes.txt
+ __pycache__/
+ blockchain/data/*.csv
++
++multi/config.env
+diff --git a/blockchain/scripts/anchor_clean.sh b/blockchain/scripts/anchor_clean.sh
+index f95a384..3073dfc 100755
+--- a/blockchain/scripts/anchor_clean.sh
++++ b/blockchain/scripts/anchor_clean.sh
+@@ -9,10 +9,10 @@ cd "$ROOT_DIR/ransomware"
+ ROOT=$("$PY" -c "import snapshot; print(snapshot.snapshot('data/snapshot')['root'])")
+ cd "$ROOT_DIR"
+ "$PY" - << PYEOF
+-import json
++import json, os
+ from web3 import Web3
+ dep = json.load(open("deployments/localhost.json"))
+-w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
++w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
+ c = w3.eth.contract(address=dep["address"], abi=dep["abi"])
+ a = w3.eth.accounts[0]
+ if c.functions.stakes(a).call() == 0:
+diff --git a/blockchain/scripts/anchor_snapshot.py b/blockchain/scripts/anchor_snapshot.py
+index 6b54ad9..f35c60c 100644
+--- a/blockchain/scripts/anchor_snapshot.py
++++ b/blockchain/scripts/anchor_snapshot.py
+@@ -4,7 +4,7 @@ from web3 import Web3
+ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ DEP = json.load(open(f"{HERE}/../deployments/localhost.json"))
+ 
+-w3 = Web3(Web3.HTTPProvider(dep := "http://127.0.0.1:8545"))
++w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
+ contract = w3.eth.contract(address=DEP["address"], abi=DEP["abi"])
+ 
+ ip = sys.argv[1] if len(sys.argv) > 1 else "172.30.0.12"
+diff --git a/blockchain/scripts/verify_anchor.py b/blockchain/scripts/verify_anchor.py
+index 5b89a49..35f57eb 100644
+--- a/blockchain/scripts/verify_anchor.py
++++ b/blockchain/scripts/verify_anchor.py
+@@ -9,7 +9,7 @@ import snapshot as snap   # same root rule as the anchored value
+ 
+ ip, folder = sys.argv[1], sys.argv[2]
+ dep = json.load(open(os.path.join(HERE, "..", "..", "deployments", "localhost.json")))
+-w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
++w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
+ c = w3.eth.contract(address=dep["address"], abi=dep["abi"])
+ 
+ local = snap.snapshot(folder)["root"]
+diff --git a/dashboard/app/ShieldLive.jsx b/dashboard/app/ShieldLive.jsx
+index 0e739df..2c18d37 100644
+--- a/dashboard/app/ShieldLive.jsx
++++ b/dashboard/app/ShieldLive.jsx
+@@ -98,7 +98,7 @@ export default function ShieldLive() {
+     try {
+       const r = await fetch("/api/rollback", {
+         method: "POST", headers: { "content-type": "application/json" },
+-        body: JSON.stringify({ ip: "172.30.0.12" }),
++        body: JSON.stringify({}),   // the server picks the IP (ATTACKER_IP, default 172.30.0.12)
+       });
+       setRb(await r.json());
+     } catch (e) { setRb({ ok: false, output: String(e) }); }
+diff --git a/dashboard/app/api/blocked/route.js b/dashboard/app/api/blocked/route.js
+index ab0fbe7..f21ef79 100644
+--- a/dashboard/app/api/blocked/route.js
++++ b/dashboard/app/api/blocked/route.js
+@@ -1,13 +1,18 @@
+ import { execSync } from "child_process";
++import { MULTI, agent } from "../../../lib/agent.js";
+ 
+ export async function GET() {
+   const out = {};
+   for (const n of ["target", "peer"]) {
+     try {
++      if (MULTI) {
++        out[n] = (await agent(n, "/ipset")).ips;          // four-laptop mode: ask the agent
++        continue;
++      }
+       const t = execSync(`docker exec ${n} ipset list city_blacklist`, { timeout: 3000 }).toString();
+       out[n] = t.split("\n").filter(l => /^\d+\.\d+\.\d+\.\d+/.test(l)).map(l => l.trim().split(/\s+/)[0]);
+     } catch {
+-      out[n] = null;   // container not running
++      out[n] = null;   // container not running / agent not reachable
+     }
+   }
+   return Response.json(out);
+diff --git a/dashboard/app/api/detector/route.js b/dashboard/app/api/detector/route.js
+index 4a3bef1..7cf2182 100644
+--- a/dashboard/app/api/detector/route.js
++++ b/dashboard/app/api/detector/route.js
+@@ -1,10 +1,15 @@
+ import fs from "fs";
+ import path from "path";
++import { MULTI, agentLog } from "../../../lib/agent.js";
+ 
+ export async function GET() {
+-  const log = path.join(process.cwd(), "..", "ransomware/evidence/watch.log");
+   let text = "";
+-  try { text = fs.readFileSync(log, "utf8"); } catch {}
++  if (MULTI) {
++    text = (await agentLog("target", "watch", 500)).join("\n");   // watch.log lives on laptop T
++  } else {
++    const log = path.join(process.cwd(), "..", "ransomware/evidence/watch.log");
++    try { text = fs.readFileSync(log, "utf8"); } catch {}
++  }
+   const lines = text.split("\n");
+   const files = new Set(
+     lines.filter(l => l.includes(" FLAGGED ")).map(l => l.split(/\s+/)[4])
+diff --git a/dashboard/app/api/rollback/route.js b/dashboard/app/api/rollback/route.js
+index 2f13765..f01f9fd 100644
+--- a/dashboard/app/api/rollback/route.js
++++ b/dashboard/app/api/rollback/route.js
+@@ -1,11 +1,21 @@
+ import { execFileSync } from "child_process";
+ import path from "path";
++import { MULTI, agent } from "../../../lib/agent.js";
+ 
+ // POST /api/rollback  {ip?}  -> restores data/sample_copy from the clean snapshot,
+ // but only if its Merkle root matches the root anchored on-chain for that IP.
+ export async function POST(req) {
+   const body = await req.json().catch(() => ({}));
+-  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : "172.30.0.12";
++  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : (process.env.ATTACKER_IP || "172.30.0.12");
++  if (MULTI) {   // four-laptop mode: laptop T restores its own folder and checks the chain
++    const t0m = Date.now();
++    try {
++      const r = await agent("target", "/rollback", { method: "POST", body: JSON.stringify({ ip }), timeout: 60000 });
++      return Response.json({ ok: !!r.ok, ip, ms: Date.now() - t0m, output: r.output || "" });
++    } catch (e) {
++      return Response.json({ ok: false, ip, ms: Date.now() - t0m, output: "target agent not reachable: " + e.message });
++    }
++  }
+   const root = path.join(process.cwd(), "..");
+   const py = path.join(root, "blockchain", ".venv", "bin", "python3");
+   const t0 = Date.now();
+diff --git a/dashboard/app/api/timeline/route.js b/dashboard/app/api/timeline/route.js
+index b65760a..8a7a308 100644
+--- a/dashboard/app/api/timeline/route.js
++++ b/dashboard/app/api/timeline/route.js
+@@ -1,6 +1,7 @@
+ import fs from "fs";
+ import path from "path";
+ import { execSync } from "child_process";
++import { MULTI, agentLog } from "../../../lib/agent.js";
+ 
+ function containerLines(name, file) {
+   try {
+@@ -12,7 +13,8 @@ export async function GET() {
+   const ev = [];
+   // Layer 2: ransomware detector (host file)
+   let text = "";
+-  try { text = fs.readFileSync(path.join(process.cwd(), "..", "ransomware/evidence/watch.log"), "utf8"); } catch {}
++  if (MULTI) text = (await agentLog("target", "watch", 60)).join("\n");
++  else { try { text = fs.readFileSync(path.join(process.cwd(), "..", "ransomware/evidence/watch.log"), "utf8"); } catch {} }
+   for (const l of text.split("\n").slice(-60)) {
+     const m = l.match(/^(\d+\.\d+)\s+(FLAGGED|KILL_TRIGGER|KILLED)\s*(.*)$/);
+     if (!m) continue;
+@@ -25,7 +27,8 @@ export async function GET() {
+     ["target", "/var/log/parser_block.log", /PARSER_BLOCK ip=(\S+) ts=([\d.]+)/, "Blocked on target"],
+     ["peer", "/var/log/peer_block.log", /PEER_BLOCK ip=(\S+) ts=([\d.]+)/, "Immunised on peer"],
+   ]) {
+-    for (const l of containerLines(name, file)) {
++    const lines = MULTI ? await agentLog(name, name === "target" ? "parser_block" : "peer_block", 20) : containerLines(name, file);
++    for (const l of lines) {
+       const m = l.match(re);
+       if (m) ev.push({ ts: Number(m[2]), layer: 1, kind: "BLOCK", text: verb + ": " + m[1] });
+     }
+diff --git a/dashboard/lib/agent.js b/dashboard/lib/agent.js
+new file mode 100644
+index 0000000..0bed10a
+--- /dev/null
++++ b/dashboard/lib/agent.js
+@@ -0,0 +1,19 @@
++// Four-laptop mode. When MULTI=1 the dashboard (laptop D) asks small HTTP agents on the target (T)
++// and peer (P) laptops instead of running `docker exec` on its own machine.
++export const MULTI = process.env.MULTI === "1";
++const URLS = { target: process.env.TARGET_AGENT, peer: process.env.PEER_AGENT };
++const TOKEN = process.env.AGENT_TOKEN || "dualshield";
++
++export async function agent(who, path, opts = {}) {
++  const base = URLS[who];
++  if (!base) throw new Error("no agent URL for " + who);
++  const r = await fetch(base + path, {
++    ...opts, cache: "no-store", signal: AbortSignal.timeout(opts.timeout || 3000),
++    headers: { "X-Token": TOKEN, "content-type": "application/json" },
++  });
++  return r.json();
++}
++
++export async function agentLog(who, name, n = 60) {
++  try { return (await agent(who, `/log?name=${name}&n=${n}`)).lines || []; } catch { return []; }
++}
+diff --git a/detector/ssh_parser.py b/detector/ssh_parser.py
+index 61e8cb7..5b0ed72 100644
+--- a/detector/ssh_parser.py
++++ b/detector/ssh_parser.py
+@@ -35,6 +35,8 @@ WINDOW = 5      # ... inside this many seconds
+ 
+ # Never block these: the SOC host (the Docker bridge gateway) and the peer node.
+ WHITELIST = {"172.30.0.1", "172.30.0.11"}
++# Four-laptop mode: the dashboard and peer laptops are added through WHITELIST_EXTRA="ip1,ip2".
++WHITELIST |= {x.strip() for x in os.environ.get("WHITELIST_EXTRA", "").split(",") if x.strip()}
+ 
+ FAIL_PATTERN = re.compile(
+     r"Failed password for (?:invalid user )?\S+ from (\d{1,3}(?:\.\d{1,3}){3})"
+diff --git a/multi/README_MULTI.md b/multi/README_MULTI.md
+new file mode 100644
+index 0000000..e2143ad
+--- /dev/null
++++ b/multi/README_MULTI.md
+@@ -0,0 +1,67 @@
++# Dual-Shield on four laptops
++
++| Laptop | Role | Runs | Needs Docker? |
++|---|---|---|---|
++| **D** | Dashboard + blockchain | Hardhat chain, contract, dashboard | no |
++| **T** | Target | SSH server, log parser, ipset, ransomware watcher, snapshot | no |
++| **P** | Peer | chain listener, ipset | no |
++| **A** | Attacker | Hydra | no |
++
++The one-laptop Docker lab (`./start_lab.sh`, `./demo.sh`) is unchanged and remains the main demo and the fallback.
++Everything below is in `multi/`. T and P run directly on the laptop (as root), not in containers, so T sees the attacker's real address.
++
++## 1. Network (once)
++- All four laptops on one router or phone hotspot (not venue Wi-Fi). Write each address from `hostname -I`.
++- **Windows laptops running WSL2 (D, T, P, A):** other laptops can only reach WSL if it shares the Windows address.
++  1. Windows 11 22H2 or newer and `wsl --update`.
++  2. Create `C:\Users\<you>\.wslconfig` with
++     ```
++     [wsl2]
++     networkingMode=mirrored
++     ```
++  3. In PowerShell as Administrator: `wsl --shutdown`, then
++     `Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow`
++  4. Allow the ports in Windows Firewall (PowerShell as Administrator):
++     `New-NetFirewallRule -DisplayName DualShield -Direction Inbound -Protocol TCP -LocalPort 22,3000,8545,8800 -Action Allow`
++  5. Open WSL again: `hostname -I` should now show the Windows LAN address.
++  Do NOT use `netsh interface portproxy` for T: it hides the attacker's address, so the wrong address would be blocked.
++- Clocks: the timeline compares timestamps from different laptops. Run `w32tm /resync` in Administrator PowerShell, then `sudo hwclock -s` in WSL, on every laptop.
++
++## 2. Install (once per laptop)
++```
++git clone https://github.com/Deepanshu-105/DUAL-SHIELD.git && cd DUAL-SHIELD
++git checkout multi-laptop          # until it is merged into main
++cp multi/config.env.example multi/config.env     # same four IPs on all four laptops
++nano multi/config.env
++```
++Then, on each laptop only its own script:
++`multi/install_D.sh` (D), `sudo multi/install_T.sh` (T), `sudo multi/install_P.sh` (P), `multi/install_A.sh` (A).
++Check the network from any laptop: `multi/check_net.sh`.
++
++## 3. Start order (each in its own terminal; T and P stay in the foreground)
++1. **D:** `multi/start_D.sh` (starts the chain, deploys, then the dashboard on http://localhost:3000).
++2. **T:** `sudo multi/start_T.sh` (wait for `T READY`).
++3. **P:** `sudo multi/start_P.sh` (wait for `P READY`).
++4. Dashboard on D should show Chain live and both layer pills green. Restarting D wipes the chain, so restart T and P afterwards.
++
++## 4. The demo
++1. **A:** `multi/attack_A.sh`. T's terminal shows `[FAIL]` x3, `[BLOCKED]`; P's terminal shows `EVENT` and `PEER_BLOCK`; A prints `BLOCKED: port 22 ... no longer answers`.
++2. **D:** dashboard shows threat confirmed, blocked lists on T and P, timeline.
++3. **D (or T):** `multi/ransomware_trigger.sh`. Dashboard shows flagged 3, kills 1. (A cannot trigger this: it is blocked by now. The step stands for malware already inside T.)
++4. **D:** click **Roll back to clean state**. Expect `ANCHOR_MATCH` and `ROLLBACK_OK 10 of 10`.
++5. Re-run: `sudo multi/start_T.sh` and `sudo multi/start_P.sh` again (clears the blocks), then repeat.
++
++## 5. Honest limits
++- The second report that makes consensus (K=2) is still scripted (`COREPORT=1`): only T detects attacks.
++- The chain is one local Hardhat node on D with instant mining.
++- The ransomware is the mock, started through T's agent; it only touches `ransomware/data/sample_copy`.
++- The agent on T and P is for the lab only (token header, no encryption).
++
++## 6. Troubleshooting
++| Symptom | Fix |
++|---|---|
++| `check_net.sh` ping fails | Same router? Windows Firewall? Mirrored networking set and `wsl --shutdown` done? |
++| `cannot fetch the contract` | Start D first; `curl http://<D_IP>:3000/localhost.json` from T should print JSON |
++| A is never blocked but T shows `[FAIL] ... from 172.x` | T sees the wrong source address (NAT): use mirrored networking or a native Ubuntu laptop |
++| Dashboard `blocked` tiles empty | agent not running on T or P; `curl -H 'X-Token: dualshield' http://<T_IP>:8800/health` |
++| `ANCHOR_MISSING` | `sudo multi/start_T.sh` again (it anchors the clean state for `A_IP`) |
+diff --git a/multi/agent.py b/multi/agent.py
+new file mode 100755
+index 0000000..3af16c0
+--- /dev/null
++++ b/multi/agent.py
+@@ -0,0 +1,134 @@
++#!/usr/bin/env python3
++"""Dual-Shield agent for four-laptop mode (standard library only; run as root).
++
++Runs on the target laptop (ROLE=target) and the peer laptop (ROLE=peer) so the dashboard laptop
++can read their state. Every request needs the header  X-Token: <AGENT_TOKEN>.
++
++  GET  /ipset                 -> {"ips": [...]}          members of the ipset city_blacklist
++  GET  /log?name=X&n=N        -> {"lines": [...]}        last N lines of a known log file
++  POST /rollback  {"ip":..}   -> target only: restore data/sample_copy after the on-chain check
++  POST /ransomware            -> target only: arm the watcher (kill rule) and start the mock attack
++  GET  /health                -> {"ok": true, "role": ...}
++Lab use only: do not expose this to a real network.
++"""
++import json, os, re, subprocess, sys, time
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from urllib.parse import urlparse, parse_qs
++
++ROOT = os.environ.get("SHIELD_ROOT", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
++ROLE = os.environ.get("ROLE", "target")
++TOKEN = os.environ.get("AGENT_TOKEN", "dualshield")
++PORT = int(os.environ.get("AGENT_PORT", "8800"))
++PY = os.environ.get("SHIELD_PY", sys.executable)
++RDIR = os.path.join(ROOT, "ransomware")
++LOGS = {
++    "parser_block": "/var/log/parser_block.log",
++    "peer_block": "/var/log/peer_block.log",
++    "metrics": "/var/log/metrics.log",
++    "watch": os.path.join(RDIR, "evidence", "watch.log"),
++}
++IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
++watcher = None   # subprocess of detect.py watch
++
++
++def tail(path, n):
++    try:
++        with open(path, "r", errors="replace") as f:
++            return f.read().splitlines()[-n:]
++    except OSError:
++        return []
++
++
++def ipset_members():
++    try:
++        out = subprocess.run(["ipset", "list", "city_blacklist"], capture_output=True, text=True)
++    except OSError:
++        return None
++    if out.returncode != 0:
++        return None
++    return [l.split()[0] for l in out.stdout.splitlines() if re.match(r"^\d+\.\d+\.\d+\.\d+", l)]
++
++
++def run_rollback(ip):
++    env = dict(os.environ)
++    t0 = time.time()
++    r = subprocess.run([PY, "rollback.py", "restore", "data/sample_copy", "--anchor", ip],
++                       cwd=RDIR, env=env, capture_output=True, text=True, timeout=60)
++    return {"ok": r.returncode == 0, "ms": int((time.time() - t0) * 1000), "output": r.stdout + r.stderr}
++
++
++def start_ransomware():
++    """Same steps as demo.sh stages 'kill rule armed' and 'attack', without Docker."""
++    global watcher
++    if watcher and watcher.poll() is None:
++        watcher.terminate()
++    open(os.path.join(RDIR, "evidence", "watch.log"), "w").close()
++    subprocess.run([PY, "rollback.py", "snapshot", "data/sample"], cwd=RDIR, capture_output=True)
++    wl = open(os.path.join(RDIR, "evidence", "watch.log"), "a")
++    watcher = subprocess.Popen([PY, "-u", "detect.py", "watch", "data/sample_copy", "--kill"],
++                               cwd=RDIR, stdout=wl, stderr=subprocess.STDOUT)
++    time.sleep(2)
++    subprocess.Popen([PY, "mock_crypto.py", "--delay", "0.5"], cwd=RDIR,
++                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++    return {"ok": True, "output": "watcher armed, mock ransomware started"}
++
++
++class H(BaseHTTPRequestHandler):
++    def log_message(self, *a):
++        pass
++
++    def send(self, code, obj):
++        b = json.dumps(obj).encode()
++        self.send_response(code)
++        self.send_header("content-type", "application/json")
++        self.send_header("content-length", str(len(b)))
++        self.end_headers()
++        self.wfile.write(b)
++
++    def authed(self):
++        if self.headers.get("X-Token") != TOKEN:
++            self.send(401, {"error": "bad token"})
++            return False
++        return True
++
++    def do_GET(self):
++        if not self.authed():
++            return
++        u = urlparse(self.path)
++        q = parse_qs(u.query)
++        if u.path == "/health":
++            return self.send(200, {"ok": True, "role": ROLE})
++        if u.path == "/ipset":
++            ips = ipset_members()
++            return self.send(200 if ips is not None else 500, {"ips": ips})
++        if u.path == "/log":
++            name = (q.get("name") or [""])[0]
++            n = max(1, min(int((q.get("n") or ["50"])[0]), 1000))
++            if name not in LOGS:
++                return self.send(404, {"error": "unknown log"})
++            return self.send(200, {"lines": tail(LOGS[name], n)})
++        self.send(404, {"error": "not found"})
++
++    def do_POST(self):
++        if not self.authed():
++            return
++        body = {}
++        try:
++            body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
++        except ValueError:
++            pass
++        if ROLE != "target":
++            return self.send(404, {"error": "target only"})
++        if self.path == "/rollback":
++            ip = body.get("ip", "")
++            if not IP_RE.match(ip):
++                return self.send(400, {"ok": False, "output": "bad ip"})
++            return self.send(200, run_rollback(ip))
++        if self.path == "/ransomware":
++            return self.send(200, start_ransomware())
++        self.send(404, {"error": "not found"})
++
++
++if __name__ == "__main__":
++    print("agent role=%s port=%d root=%s" % (ROLE, PORT, ROOT), flush=True)
++    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+diff --git a/multi/attack_A.sh b/multi/attack_A.sh
+new file mode 100755
+index 0000000..6833bf1
+--- /dev/null
++++ b/multi/attack_A.sh
+@@ -0,0 +1,15 @@
++#!/bin/bash
++# Laptop A (attacker): SSH password guessing against T, then prove from here that T has cut A off.
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++command -v hydra >/dev/null || { echo "hydra missing: run multi/install_A.sh"; exit 1; }
++printf 'password\n123456\nadmin\nletmein\n' > /tmp/pw.txt
++echo "=== attacking testuser@$T_IP from $A_IP ==="
++hydra -l testuser -P /tmp/pw.txt -t 4 ssh://"$T_IP"
++echo
++echo "=== is T still reachable from here? (a block shows as a timeout) ==="
++if timeout 4 bash -c "exec 3<>/dev/tcp/$T_IP/22" 2>/dev/null; then
++  echo "STILL OPEN: T did not block this laptop"
++else
++  echo "BLOCKED: port 22 on $T_IP no longer answers"
++fi
+diff --git a/multi/check_net.sh b/multi/check_net.sh
+new file mode 100755
+index 0000000..ee5673c
+--- /dev/null
++++ b/multi/check_net.sh
+@@ -0,0 +1,15 @@
++#!/bin/bash
++# Run on any laptop: can it see the others?
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++for n in D T P A; do
++  v="${n}_IP"; ip="${!v}"
++  ping -c1 -W2 "$ip" >/dev/null 2>&1 && echo "ping  $n ($ip): ok" || echo "ping  $n ($ip): NO ANSWER"
++done
++curl -s -m3 -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
++  "http://$D_IP:8545" | grep -q result && echo "chain http://$D_IP:8545: ok" || echo "chain http://$D_IP:8545: NOT REACHABLE"
++curl -s -m3 "http://$D_IP:3000/localhost.json" | grep -q address && echo "dashboard file http://$D_IP:3000/localhost.json: ok" || echo "dashboard http://$D_IP:3000: NOT REACHABLE"
++for n in T P; do
++  v="${n}_IP"; ip="${!v}"
++  curl -s -m3 -H "X-Token: $AGENT_TOKEN" "http://$ip:8800/health" | grep -q ok && echo "agent $n http://$ip:8800: ok" || echo "agent $n http://$ip:8800: not running (normal before start_$n.sh)"
++done
+diff --git a/multi/common.sh b/multi/common.sh
+new file mode 100755
+index 0000000..1e146b3
+--- /dev/null
++++ b/multi/common.sh
+@@ -0,0 +1,21 @@
++# sourced by the other multi/*.sh scripts
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++CFG="$ROOT/multi/config.env"
++if [ ! -f "$CFG" ]; then
++  echo "Missing multi/config.env. Run:  cp multi/config.env.example multi/config.env   then edit the four IPs."
++  exit 1
++fi
++. "$CFG"
++export AGENT_TOKEN
++export CHAIN_HTTP="http://$D_IP:8545"
++VENV="$ROOT/blockchain/.venv"
++PY="$VENV/bin/python3"
++need_root() { [ "$EUID" -eq 0 ] || { echo "Run this with sudo:  sudo $0"; exit 1; }; }
++need_venv() { [ -x "$PY" ] || { echo "Python environment missing. Run the install script for this laptop first."; exit 1; }; }
++fetch_deploy() {   # contract address + ABI come from the dashboard laptop
++  for i in $(seq 1 30); do
++    curl -sf "http://$D_IP:3000/localhost.json" -o "$ROOT/deployments/localhost.json" && return 0
++    sleep 2
++  done
++  return 1
++}
+diff --git a/multi/config.env.example b/multi/config.env.example
+new file mode 100644
+index 0000000..e16c800
+--- /dev/null
++++ b/multi/config.env.example
+@@ -0,0 +1,7 @@
++# Copy to multi/config.env on EVERY laptop and fill in the four LAN addresses (same file on all four).
++# Get each address on its own laptop with:  hostname -I   (use the 192.168.x.x or 10.x.x.x one)
++D_IP=192.168.1.10     # D = dashboard + blockchain laptop
++T_IP=192.168.1.11     # T = target laptop (SSH server, parser, ransomware watcher)
++P_IP=192.168.1.12     # P = peer laptop (listens to the chain, blocks the attacker)
++A_IP=192.168.1.13     # A = attacker laptop (Hydra)
++AGENT_TOKEN=dualshield
+diff --git a/multi/install_A.sh b/multi/install_A.sh
+new file mode 100755
+index 0000000..110baff
+--- /dev/null
++++ b/multi/install_A.sh
+@@ -0,0 +1,8 @@
++#!/bin/bash
++# Laptop A (attacker). Run with sudo for apt.
++set -e
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++sudo apt-get update -qq
++sudo apt-get install -y hydra openssh-client curl git iputils-ping
++[ -f "$ROOT/multi/config.env" ] || cp "$ROOT/multi/config.env.example" "$ROOT/multi/config.env"
++echo "A is ready. Edit multi/config.env, then run multi/attack_A.sh when told to."
+diff --git a/multi/install_D.sh b/multi/install_D.sh
+new file mode 100755
+index 0000000..7900895
+--- /dev/null
++++ b/multi/install_D.sh
+@@ -0,0 +1,16 @@
++#!/bin/bash
++# Laptop D (dashboard + chain). No Docker, no sudo needed except for apt.
++set -e
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++sudo apt-get update -qq
++sudo apt-get install -y git curl python3
++if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]; then
++  echo "Node 22 is needed. Install it with nvm:"
++  echo '  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash'
++  echo '  (open a new terminal)  nvm install 22 && nvm use 22   then run this script again'
++  exit 1
++fi
++(cd "$ROOT/blockchain" && npm install)
++(cd "$ROOT/dashboard" && npm install)
++[ -f "$ROOT/multi/config.env" ] || cp "$ROOT/multi/config.env.example" "$ROOT/multi/config.env"
++echo "D is ready. Edit multi/config.env, then run multi/start_D.sh"
+diff --git a/multi/install_P.sh b/multi/install_P.sh
+new file mode 100755
+index 0000000..516b685
+--- /dev/null
++++ b/multi/install_P.sh
+@@ -0,0 +1,11 @@
++#!/bin/bash
++# Laptop P (peer). Run with sudo.
++set -e
++[ "$EUID" -eq 0 ] || { echo "Run with sudo:  sudo $0"; exit 1; }
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++apt-get update -qq
++apt-get install -y ipset iptables iproute2 procps curl git python3 python3-venv python3-pip
++python3 -m venv "$ROOT/blockchain/.venv"
++"$ROOT/blockchain/.venv/bin/pip" install -q web3
++[ -f "$ROOT/multi/config.env" ] || cp "$ROOT/multi/config.env.example" "$ROOT/multi/config.env"
++echo "P is ready. Edit multi/config.env, then run:  sudo multi/start_P.sh"
+diff --git a/multi/install_T.sh b/multi/install_T.sh
+new file mode 100755
+index 0000000..c224fe5
+--- /dev/null
++++ b/multi/install_T.sh
+@@ -0,0 +1,16 @@
++#!/bin/bash
++# Laptop T (target). Run with sudo.
++set -e
++[ "$EUID" -eq 0 ] || { echo "Run with sudo:  sudo $0"; exit 1; }
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++apt-get update -qq
++apt-get install -y openssh-server rsyslog ipset iptables procps curl git python3 python3-venv python3-pip
++python3 -m venv "$ROOT/blockchain/.venv"
++"$ROOT/blockchain/.venv/bin/pip" install -q web3 watchdog cryptography
++id testuser >/dev/null 2>&1 || useradd -m testuser
++echo 'testuser:password123' | chpasswd
++mkdir -p /etc/ssh/sshd_config.d
++echo 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/00-lab.conf   # first value wins in sshd
++ssh-keygen -A
++[ -f "$ROOT/multi/config.env" ] || cp "$ROOT/multi/config.env.example" "$ROOT/multi/config.env"
++echo "T is ready. Edit multi/config.env, then run:  sudo multi/start_T.sh"
+diff --git a/multi/ransomware_trigger.sh b/multi/ransomware_trigger.sh
+new file mode 100755
+index 0000000..f847d45
+--- /dev/null
++++ b/multi/ransomware_trigger.sh
+@@ -0,0 +1,8 @@
++#!/bin/bash
++# Run on D (or on T), NOT on A: A is blocked by then. Starts the watcher (kill rule) and the mock ransomware on T.
++# It stands for "malware that is already inside T through another route". Nothing real is encrypted:
++# the mock only touches ransomware/data/sample_copy.
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++curl -s -X POST -H "X-Token: $AGENT_TOKEN" "http://$T_IP:8800/ransomware"; echo
++echo "Watch laptop D: flagged files, kills, then click 'Roll back to clean state'."
+diff --git a/multi/start_D.sh b/multi/start_D.sh
+new file mode 100755
+index 0000000..f24de7d
+--- /dev/null
++++ b/multi/start_D.sh
+@@ -0,0 +1,23 @@
++#!/bin/bash
++# Laptop D: start the chain, deploy the contract, then run the dashboard (stays in the foreground).
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++rpc() { curl -s -X POST -H 'Content-Type: application/json' \
++  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://127.0.0.1:8545 | grep -q result; }
++cd "$ROOT/blockchain" || exit 1
++if ! rpc; then
++  echo "starting hardhat node on 0.0.0.0:8545 ..."
++  nohup npx hardhat node --hostname 0.0.0.0 > /tmp/hardhat.log 2>&1 &
++  for i in $(seq 1 30); do sleep 1; rpc && break; done
++fi
++rpc || { echo "FAIL: chain not reachable"; exit 1; }
++npx hardhat run scripts/deploy.js --network localhost || { echo "FAIL: deploy"; exit 1; }
++cd "$ROOT"
++cp deployments/localhost.json dashboard/public/localhost.json
++echo
++echo "Chain:     http://$D_IP:8545"
++echo "Dashboard: http://localhost:3000   (T and P fetch the contract from http://$D_IP:3000/localhost.json)"
++echo "Now start T and P (sudo multi/start_T.sh, sudo multi/start_P.sh). Dashboard starting ..."
++cd "$ROOT/dashboard"
++MULTI=1 TARGET_AGENT="http://$T_IP:8800" PEER_AGENT="http://$P_IP:8800" ATTACKER_IP="$A_IP" \
++  exec npm run dev -- -H 0.0.0.0
+diff --git a/multi/start_P.sh b/multi/start_P.sh
+new file mode 100755
+index 0000000..9538055
+--- /dev/null
++++ b/multi/start_P.sh
+@@ -0,0 +1,17 @@
++#!/bin/bash
++# Laptop P (peer). Run with sudo, AFTER start_D.sh. Stays in the foreground and shows peer blocks.
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++need_root; need_venv
++pkill -f network/listener.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
++ipset create city_blacklist hash:ip -exist
++ipset flush city_blacklist
++iptables -C INPUT -m set --match-set city_blacklist src -j DROP 2>/dev/null || \
++  iptables -I INPUT -m set --match-set city_blacklist src -j DROP
++: > /var/log/peer_block.log
++
++fetch_deploy || { echo "FAIL: cannot fetch the contract from http://$D_IP:3000 (is start_D.sh running?)"; exit 1; }
++ROLE=peer SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
++echo "P READY: agent on :8800, listening to the chain at $CHAIN_HTTP. Peer log below (Ctrl+C stops it)."
++echo "-----"
++exec env CHAIN_HTTP="$CHAIN_HTTP" DEPLOY="$ROOT/deployments/localhost.json" "$PY" -u "$ROOT/network/listener.py"
+diff --git a/multi/start_T.sh b/multi/start_T.sh
+new file mode 100755
+index 0000000..4f88ee4
+--- /dev/null
++++ b/multi/start_T.sh
+@@ -0,0 +1,32 @@
++#!/bin/bash
++# Laptop T (target). Run with sudo, AFTER start_D.sh. Stays in the foreground and shows the parser log.
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++. "$ROOT/multi/common.sh"
++need_root; need_venv
++export PATH="$VENV/bin:$PATH"
++
++pkill -f ssh_parser.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
++service ssh start 2>/dev/null || service sshd start
++service rsyslog start
++touch /var/log/auth.log
++ipset create city_blacklist hash:ip -exist
++ipset flush city_blacklist
++: > /var/log/parser_block.log; : > /var/log/metrics.log
++
++fetch_deploy || { echo "FAIL: cannot fetch the contract from http://$D_IP:3000 (is start_D.sh running?)"; exit 1; }
++curl -sf -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
++  "$CHAIN_HTTP" | grep -q result || { echo "FAIL: chain not reachable at $CHAIN_HTTP"; exit 1; }
++
++"$ROOT/ransomware/setup_sample.sh" >/dev/null 2>&1 || echo "WARN: sample setup failed"
++: > "$ROOT/ransomware/evidence/watch.log"
++COREPORT=1 PYTHONPATH="$ROOT/network" DEPLOY="$ROOT/deployments/localhost.json" \
++  "$PY" "$ROOT/network/chain_report.py" 203.0.113.1 >/dev/null 2>&1 || true      # warm-up report
++"$ROOT/blockchain/scripts/anchor_clean.sh" "$A_IP" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback will say ANCHOR_MISSING)"
++
++ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
++echo "T READY: agent on :8800, SSH on :22, protecting against $A_IP. Parser log below (Ctrl+C stops it)."
++echo "-----"
++cd "$ROOT/detector"
++exec env COREPORT=1 PYTHONPATH="$ROOT/network" DEPLOY="$ROOT/deployments/localhost.json" \
++  WHITELIST_EXTRA="$D_IP,$P_IP" TOR_LIST="$ROOT/detector/tor_exit_nodes.txt" \
++  TOR_LIST_EXTRA="$ROOT/detector/tor_lab_test.txt" "$PY" -u ssh_parser.py
