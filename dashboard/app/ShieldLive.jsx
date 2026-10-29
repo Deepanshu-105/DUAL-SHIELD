@@ -15,6 +15,7 @@ export default function ShieldLive() {
   const [rb, setRb] = useState(null);
   const [busy, setBusy] = useState(false);
   const [mx, setMx] = useState([]);
+  const [live, setLive] = useState({ multi: false });
 
   useEffect(() => {
     let alive = true;
@@ -92,6 +93,30 @@ export default function ShieldLive() {
   useEffect(() => {
     fetch("/metrics.json", { cache: "no-store" }).then((r) => r.json()).then(setMx).catch(() => {});
   }, []);
+
+  useEffect(() => {   // four-laptop mode: numbers for the run that just happened
+    let alive = true;
+    async function poll() {
+      try {
+        const r = await fetch("/api/live", { cache: "no-store" });
+        if (alive) setLive(await r.json());
+      } catch {}
+    }
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  const fmt = (v) => (v === null || v === undefined ? "waiting..." : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v + " ms");
+  const restoreMs = rb && rb.output ? (rb.output.match(/RESTORED \d+ files.*?([\d.]+) ms/) || [])[1] : null;
+  const thisRun = !live.multi ? [] : [
+    { label: "Local block on target", value: fmt(live.dropMs), note: "log line to ipset, laptop T" },
+    { label: "Peer blocked after target", value: live.clockWarning ? "clocks differ" : fmt(live.peerMs), note: "T to P, clock-synced estimate" },
+    { label: "Kill after trigger", value: fmt(live.killMs), note: "KILL_TRIGGER to process dead, laptop T" },
+    { label: "First flag to kill", value: fmt(live.flagToKillMs), note: "laptop T" },
+    { label: "Rollback restore", value: restoreMs ? restoreMs + " ms" : "click rollback", note: "files restored on T" },
+    { label: "Rollback click, end to end", value: rb && rb.ms ? fmt(rb.ms) : "click rollback", note: "D to T over the network, includes the chain check" },
+  ];
 
   async function doRollback() {
     setBusy(true);
@@ -177,7 +202,21 @@ export default function ShieldLive() {
           </pre>
         )}
       </div>
-      <h2 style={{ marginTop: 24 }}>Measured performance</h2>
+      {live.multi && (
+        <>
+          <h2 style={{ marginTop: 24 }}>This run (four laptops){live.ip ? ", attacker " + live.ip : ""}</h2>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {thisRun.map((m) => (
+              <div key={m.label} style={{ background: "#1b3a4b", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+                <div style={{ fontSize: 24 }}>{m.value}</div>
+                <div style={{ fontSize: 11, opacity: 0.7 }}>{m.note}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <h2 style={{ marginTop: 24 }}>{live.multi ? "Measured performance (lab, frozen)" : "Measured performance"}</h2>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {mx.map((m) => (
           <div key={m.label} style={{ background: "#263238", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
