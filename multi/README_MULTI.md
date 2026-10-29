@@ -49,6 +49,7 @@ Check the network from any laptop: `multi/check_net.sh`.
 2. **D:** dashboard shows threat confirmed, blocked lists on T and P, timeline.
 3. **D (or T):** `multi/ransomware_trigger.sh`. Dashboard shows flagged 3, kills 1. (A cannot trigger this: it is blocked by now. The step stands for malware already inside T.)
 4. **D:** click **Roll back to clean state**. Expect `ANCHOR_MATCH` and `ROLLBACK_OK 10 of 10`.
+   The dashboard also shows a **This run (four laptops)** row: local block time on T, T-to-P peer block time (a clock-synced estimate; it says "clocks differ" if the laptops' clocks disagree), kill time and rollback time. The **Measured performance (lab, frozen)** row below it never changes.
 5. Re-run: `sudo multi/start_T.sh` and `sudo multi/start_P.sh` again (clears the blocks), then repeat.
 
 ## 5. Honest limits
