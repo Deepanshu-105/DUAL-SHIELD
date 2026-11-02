@@ -68,8 +68,15 @@ def main():
     score = recoverability_score(a.folder, evidence, a.vault_has_snapshot,
                                   a.shadow_available, family_matches)
 
+    contained = None
+    if os.path.exists("evidence/containment.json"):
+        c = json.load(open("evidence/containment.json"))
+        contained = {"reason": c["reason"], "network_mode": c["mode"],
+                     "vault_frozen": os.path.exists("data/vault.frozen")}
+
     report = {
         "generated_at": time.time(),
+        "containment": contained or "none recorded",
         "kill_evidence": evidence,
         "family_guess": [
             {"family": f, "decryptor": i["decryptor"], "source": i["source"]}
