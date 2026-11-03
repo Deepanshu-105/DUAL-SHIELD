@@ -5,6 +5,11 @@ import { MULTI, agent } from "../../../lib/agent.js";
 // POST /api/rollback  {ip?}  -> restores data/sample_copy from the clean snapshot,
 // but only if its Merkle root matches the root anchored on-chain for that IP.
 export async function POST(req) {
+  // v2: a custom header cannot be added by another website (it would need a CORS preflight), so a page
+  // on another site cannot ride on the operator's saved login to trigger a rollback.
+  if (req.headers.get("x-ds-confirm") !== "1") {
+    return Response.json({ ok: false, output: "missing x-ds-confirm header" }, { status: 403 });
+  }
   const body = await req.json().catch(() => ({}));
   const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : (process.env.ATTACKER_IP || "172.30.0.12");
   if (MULTI) {   // four-laptop mode: laptop T restores its own folder and checks the chain

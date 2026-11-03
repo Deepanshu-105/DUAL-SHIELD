@@ -3,6 +3,7 @@
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
 need_root; need_venv
+[ ${#AGENT_SECRET_T} -ge 16 ] || { echo "AGENT_SECRET_T missing in multi/config.env (run multi/gen_secrets.sh on D)"; exit 1; }
 export PATH="$VENV/bin:$PATH"
 
 pkill -f ssh_parser.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
@@ -23,7 +24,7 @@ COREPORT=1 PYTHONPATH="$ROOT/network" DEPLOY="$ROOT/deployments/localhost.json" 
   "$PY" "$ROOT/network/chain_report.py" 203.0.113.1 >/dev/null 2>&1 || true      # warm-up report
 "$ROOT/blockchain/scripts/anchor_clean.sh" "$A_IP" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback will say ANCHOR_MISSING)"
 
-ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
+AGENT_SECRET="$AGENT_SECRET_T" ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
 echo "T READY: agent on :8800, SSH on :22, protecting against $A_IP. Parser log below (Ctrl+C stops it)."
 echo "-----"
 cd "$ROOT/detector"

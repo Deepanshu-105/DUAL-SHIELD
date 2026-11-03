@@ -16,6 +16,9 @@ export default function ShieldLive() {
   const [busy, setBusy] = useState(false);
   const [mx, setMx] = useState([]);
   const [live, setLive] = useState({ multi: false });
+  const [rec, setRec] = useState({ available: false });
+  const [recOut, setRecOut] = useState(null);
+  const [recBusy, setRecBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -109,6 +112,45 @@ export default function ShieldLive() {
 
   const fmt = (v) => (v === null || v === undefined ? "waiting..." : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v + " ms");
   const restoreMs = rb && rb.output ? (rb.output.match(/RESTORED \d+ files.*?([\d.]+) ms/) || [])[1] : null;
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await fetch("/api/recovery", { cache: "no-store" });
+        if (alive) setRec(await r.json());
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  async function doRecovery(action) {
+    const msg = action === "recover"
+      ? "Recover the protected folder from the newest verified vault snapshot? The encrypted folder is kept aside as evidence."
+      : "Unfreeze the vault and restart the guard? Only do this after recovery, when the machine is clean.";
+    if (!window.confirm(msg)) return;
+    setRecBusy(true);
+    try {
+      const r = await fetch("/api/recovery", {
+        method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" },
+        body: JSON.stringify({ action }),
+      });
+      setRecOut(await r.json());
+    } catch (e) { setRecOut({ ok: false, output: String(e) }); }
+    setRecBusy(false);
+  }
+
+  const age = (sec) => sec == null ? "n/a" : sec < 90 ? Math.round(sec) + " s ago" : Math.round(sec / 60) + " min ago";
+  const recTiles = !rec.available ? [] : [
+    { label: "Vault", value: rec.frozen ? "FROZEN" : "protecting", note: rec.frozen ? (rec.freeze && rec.freeze.reason) || "attack suspected" : rec.commits + " snapshots", bad: rec.frozen },
+    { label: "Last snapshot", value: rec.last_commit ? age(rec.last_commit.age_s) : "none", note: rec.last_commit ? "rev " + rec.last_commit.rev + ", loss window about " + ((rec.guard && rec.guard.debounce_s) || "?") + " s" : "" },
+    { label: "Guard", value: rec.guard_alive ? "running" : "stopped", note: rec.guard ? "kill " + (rec.guard.kill ? "on" : "off") + ", held files " + rec.guard.held : "start guard.py", bad: !rec.guard_alive },
+    { label: "Containment", value: rec.containment ? rec.containment.mode.toUpperCase() : "idle", note: rec.containment ? rec.containment.reason : "no attack seen", bad: !!rec.containment },
+    { label: "Off-machine copy", value: rec.push ? (rec.push.ok ? "pushed" : "FAILED") : rec.remote ? "waiting" : "not set", note: rec.push ? "rev " + rec.push.rev + ", " + age(rec.now - rec.push.t) : "set remote in protect.json", bad: rec.push && !rec.push.ok },
+    { label: "Last recovery", value: rec.recovery ? (rec.recovery.ok ? "OK" : "FAILED") : "none yet", note: rec.recovery ? (rec.recovery.ok ? rec.recovery.files + " files, " + rec.recovery.ms + " ms, rev " + rec.recovery.rev + (rec.recovery.anchor ? ", chain " + rec.recovery.anchor : "") : "no verified snapshot") : "", bad: rec.recovery && !rec.recovery.ok },
+  ];
+
   const thisRun = !live.multi ? [] : [
     { label: "Local block on target", value: fmt(live.dropMs), note: "log line to ipset, laptop T" },
     { label: "Peer blocked after target", value: live.clockWarning ? "clocks differ" : fmt(live.peerMs), note: "T to P, clock-synced estimate" },
@@ -119,10 +161,11 @@ export default function ShieldLive() {
   ];
 
   async function doRollback() {
+    if (!window.confirm("Restore the protected folder from the clean snapshot? The chain check runs first.")) return;
     setBusy(true);
     try {
       const r = await fetch("/api/rollback", {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" },
         body: JSON.stringify({}),   // the server picks the IP (ATTACKER_IP, default 172.30.0.12)
       });
       setRb(await r.json());
@@ -202,6 +245,37 @@ export default function ShieldLive() {
           </pre>
         )}
       </div>
+      <h2 style={{ marginTop: 24 }}>Recovery vault (Layer 2)</h2>
+      {!rec.available ? (
+        <div style={{ color: "#555" }}>Vault not started yet. {rec.error ? "(" + rec.error + ")" : "Run guard.py on the target."}</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {recTiles.map((m) => (
+              <div key={m.label} style={{ background: m.bad ? "#c62828" : "#1b4332", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+                <div style={{ fontSize: 22 }}>{m.value}</div>
+                <div style={{ fontSize: 11, opacity: 0.75 }}>{m.note}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={() => doRecovery("recover")} disabled={recBusy}
+              style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#2e7d32", color: "#fff", fontSize: 16, cursor: "pointer" }}>
+              {recBusy ? "Working..." : "Recover from vault"}
+            </button>
+            <button onClick={() => doRecovery("unfreeze")} disabled={recBusy || !rec.frozen}
+              style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#455a64", color: "#fff", fontSize: 16, cursor: "pointer", opacity: rec.frozen ? 1 : 0.5 }}>
+              Unfreeze vault
+            </button>
+          </div>
+          {recOut && (
+            <pre style={{ background: recOut.ok ? "#e8f5e9" : "#ffebee", color: "#111", padding: 12, borderRadius: 8, marginTop: 12, whiteSpace: "pre-wrap" }}>
+              {(recOut.ok ? "DONE" : "FAILED") + " (" + recOut.ms + " ms)\n" + recOut.output}
+            </pre>
+          )}
+        </>
+      )}
       {live.multi && (
         <>
           <h2 style={{ marginTop: 24 }}>This run (four laptops){live.ip ? ", attacker " + live.ip : ""}</h2>

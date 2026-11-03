@@ -8,6 +8,7 @@ describe("CityShield anchorCleanState", function () {
     const contract = await CityShield.deploy();
     await contract.waitForDeployment();
 
+    await contract.addNode(addr1.address);
     await contract.connect(addr1).registerNode({ value: ethers.parseEther("1") });
 
     const fakeRoot = ethers.keccak256(ethers.toUtf8Bytes("test-merkle-root"));
