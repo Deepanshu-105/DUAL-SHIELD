@@ -12,12 +12,24 @@ LOG = "/var/log/peer_block.log"
 
 h = Web3.keccak(text="ThreatConsensusReached(string,bytes32,uint256)").hex()
 TOPIC = h if h.startswith("0x") else "0x" + h
+# v3: governance can overrule a confirmed block (collusion / false positive): then every peer lifts it.
+h2 = Web3.keccak(text="ThreatOverruled(string,uint256)").hex()
+TOPIC_OVERRULED = h2 if h2.startswith("0x") else "0x" + h2
 
 
 def block(ip):
     ipaddress.ip_address(ip)
     subprocess.run(["ipset", "add", "city_blacklist", ip, "-exist"], check=True)
     line = "PEER_BLOCK ip=%s ts=%.3f" % (ip, time.time())
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def unblock(ip):
+    ipaddress.ip_address(ip)
+    subprocess.run(["ipset", "del", "city_blacklist", ip, "-exist"], check=True)
+    line = "PEER_UNBLOCK ip=%s ts=%.3f reason=overruled" % (ip, time.time())
     print(line, flush=True)
     with open(LOG, "a") as f:
         f.write(line + "\n")
@@ -34,9 +46,15 @@ def run():
                 last = head
                 print("subscribed: polling from block %d" % head, flush=True)
             elif head > last:
-                logs = w3.eth.get_logs({"address": addr, "topics": [TOPIC],
+                logs = w3.eth.get_logs({"address": addr, "topics": [[TOPIC, TOPIC_OVERRULED]],
                                         "fromBlock": last + 1, "toBlock": head})
                 for lg in logs:
+                    t0 = lg["topics"][0].hex()
+                    if (t0 if t0.startswith("0x") else "0x" + t0) == TOPIC_OVERRULED:
+                        ip, n = decode(["string", "uint256"], bytes(lg["data"]))
+                        print("OVERRULED ip=%s slashed=%d" % (ip, n), flush=True)
+                        unblock(ip)
+                        continue
                     ip, ja3, count = decode(["string", "bytes32", "uint256"], bytes(lg["data"]))
                     print("EVENT ip=%s count=%d" % (ip, count), flush=True)
                     block(ip)
