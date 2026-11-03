@@ -15,6 +15,39 @@ contract CityShield {
         address[] reporters;
     }
 
+    // v2: only addresses approved by the owner (the deployer) may register as nodes.
+    address public owner;
+    mapping(address => bool) public approved;
+    event NodeApproved(address indexed node);
+    event NodeRevoked(address indexed node, uint forfeited);
+
+    constructor() {
+        owner = msg.sender;
+        approved[msg.sender] = true;   // the owner can anchor clean states from its own account
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "owner only");
+        _;
+    }
+
+    function addNode(address node) external onlyOwner {
+        approved[node] = true;
+        emit NodeApproved(node);
+    }
+
+    // Removes the right to vote at once; any stake is forfeited into slashedPool.
+    function revokeNode(address node) external onlyOwner {
+        approved[node] = false;
+        uint amt = stakes[node];
+        if (amt > 0) {
+            stakes[node] = 0;
+            slashedPool += amt;
+            nodeCount--;
+        }
+        emit NodeRevoked(node, amt);
+    }
+
     mapping(address => uint) public stakes;
     uint public nodeCount;
     uint public slashedPool;  // slashed funds stay in the contract (prototype)
@@ -27,6 +60,7 @@ contract CityShield {
     event NodeSlashed(address indexed node, string ip, uint amount);
 
     function registerNode() external payable {
+        require(approved[msg.sender], "not approved by owner");
         require(msg.value == STAKE, "send exactly STAKE");
         require(stakes[msg.sender] == 0, "already registered");
         stakes[msg.sender] = msg.value;

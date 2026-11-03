@@ -1,0 +1,12 @@
+{
+  "roots": [
+    {"name": "sample", "path": "data/sample_copy", "exclude": ["*.tmp", "*.swp", "~$*"], "max_mb": 200}
+  ],
+  "debounce_s": 2,
+  "max_wait_s": 30,
+  "gate_threshold": 3,
+  "release_after_s": 60,
+  "kill": true,
+  "contain": "dry",
+  "allow": []
+}

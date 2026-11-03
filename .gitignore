@@ -11,3 +11,5 @@ __pycache__/
 blockchain/data/*.csv
 
 multi/config.env
+DUAL-SHIELD/
+ransomware/evidence/*.json

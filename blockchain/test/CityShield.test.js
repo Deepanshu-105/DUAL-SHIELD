@@ -14,6 +14,7 @@ describe("CityShield", function () {
     shield = await (await ethers.getContractFactory("CityShield")).deploy();
     await shield.waitForDeployment();
     for (const s of [a, b, c]) {
+      await shield.addNode(s.address);
       await shield.connect(s).registerNode({ value: STAKE });
     }
   });
@@ -61,5 +62,35 @@ describe("CityShield", function () {
     await shield.connect(a).reportThreat(IP, JA3);
     await expect(shield.connect(a).reportThreat(IP, JA3))
       .to.be.revertedWith("already reported");
+  });
+
+  describe("v2: owner-approved registration", function () {
+    it("rejects registration from an address the owner has not approved", async function () {
+      const [, , , , rogue] = await ethers.getSigners();
+      await expect(shield.connect(rogue).registerNode({ value: STAKE }))
+        .to.be.revertedWith("not approved by owner");
+    });
+
+    it("only the owner can approve or revoke nodes", async function () {
+      const [, , , , rogue] = await ethers.getSigners();
+      await expect(shield.connect(rogue).addNode(rogue.address)).to.be.revertedWith("owner only");
+      await expect(shield.connect(a).revokeNode(b.address)).to.be.revertedWith("owner only");
+    });
+
+    it("a revoked node loses its stake and can no longer vote", async function () {
+      await expect(shield.revokeNode(a.address)).to.emit(shield, "NodeRevoked").withArgs(a.address, STAKE);
+      expect(await shield.stakes(a.address)).to.equal(0n);
+      await expect(shield.connect(a).reportThreat(IP, JA3)).to.be.revertedWith("not staked");
+      await expect(shield.connect(a).registerNode({ value: STAKE })).to.be.revertedWith("not approved by owner");
+    });
+
+    it("a fake report from an unapproved address cannot reach consensus", async function () {
+      const [, , , , rogue] = await ethers.getSigners();
+      await shield.connect(a).reportThreat(GOOD_IP, JA3);
+      await expect(shield.connect(rogue).reportThreat(GOOD_IP, JA3)).to.be.revertedWith("not staked");
+      const [count, , confirmed] = await shield.getTally(GOOD_IP);
+      expect(count).to.equal(1n);
+      expect(confirmed).to.equal(false);
+    });
   });
 });

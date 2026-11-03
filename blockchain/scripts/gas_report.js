@@ -12,6 +12,7 @@ async function main() {
   const ja3 = ethers.keccak256(ethers.toUtf8Bytes("fp"));
   const rows = [];
 
+  for (const x of [a, b, c, d]) await s.addNode(x.address);   // v2: owner approval first
   rows.push(["registerNode (stake 1 ETH)", await gas(s.connect(a).registerNode(stake))]);
   await gas(s.connect(b).registerNode(stake));
   await gas(s.connect(c).registerNode(stake));

@@ -4,5 +4,5 @@
 # the mock only touches ransomware/data/sample_copy.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
-curl -s -X POST -H "X-Token: $AGENT_TOKEN" "http://$T_IP:8800/ransomware"; echo
+python3 "$ROOT/multi/agent_call.py" T POST /ransomware "{}"
 echo "Watch laptop D: flagged files, kills, then click 'Roll back to clean state'."

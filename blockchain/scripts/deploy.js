@@ -12,6 +12,7 @@ async function main() {
 
   // register the 3 city nodes (accounts 1, 2, 3)
   for (const s of [nodeA, nodeB, nodeC]) {
+    await (await shield.addNode(s.address)).wait();   // v2: owner approves each node first
     await (await shield.connect(s).registerNode({
       value: hre.ethers.parseEther("1"),
     })).wait();

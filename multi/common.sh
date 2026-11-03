@@ -6,7 +6,7 @@ if [ ! -f "$CFG" ]; then
   exit 1
 fi
 . "$CFG"
-export AGENT_TOKEN
+export AGENT_SECRET_T AGENT_SECRET_P DASH_PASS
 export CHAIN_HTTP="http://$D_IP:8545"
 VENV="$ROOT/blockchain/.venv"
 PY="$VENV/bin/python3"
