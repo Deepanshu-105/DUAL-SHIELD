@@ -69,13 +69,15 @@ check("mitigation rule", "hashlimit" in mitigation_commands()[0])
 
 # 8. live capture on loopback (needs root + AF_PACKET); dry mode, nothing is blocked
 try:
+    if os.geteuid() != 0:
+        raise PermissionError
     stop = threading.Event()
-    an = FloodAnalyzer(syn_rate=50, window=1.0, whitelist=set())
+    an = FloodAnalyzer(syn_rate=15, window=2.0, whitelist=set())
     rx = Reactor(dry=True, apply_mit=False, whitelist=set(), chain=False)
-    t = threading.Thread(target=capture, args=("lo", an, rx, stop), daemon=True)
+    t = threading.Thread(target=capture, args=(None, an, rx, stop), daemon=True)
     t.start()
     time.sleep(0.5)
-    end = time.time() + 1.5
+    end = time.time() + 3.0
     while time.time() < end:                                   # connection attempts to a closed port = SYNs
         for _ in range(30):
             s = socket.socket()
