@@ -18,7 +18,10 @@ import detect, vault, containment
 
 DEFAULTS = {"debounce_s": 2.0, "max_wait_s": 30.0, "gate_threshold": 3,
             "release_after_s": 60.0, "kill": True, "contain": "dry", "allow": [],
-            "remote": ""}      # remote: a git URL or path; every commit is pushed there (off-machine copy)
+            "remote": "",
+            "canary": False,        # decoy files in every root: touching one = instant kill (catches slow ransomware)
+            "burst_files": 0,       # 0 = off. N = freeze+contain if N distinct files change within burst_window_s
+            "burst_window_s": 5.0}      # remote: a git URL or path; every commit is pushed there (off-machine copy)
 
 
 def load_config(path):
@@ -43,6 +46,44 @@ class Guard:
         self.contained = False
         self.held = 0
         self.started = time.time()
+        self.canaries = {}             # abs path -> (root name, rel)
+        self.burst = []                # (ts, path) of recent modifications
+
+    CANARY_FILES = {".~ds_canary_a.docx": "Quarterly budget draft. Do not delete.\n" * 40,
+                    ".~ds_canary_b.xlsx": "id,amount,note\n" + "".join("%d,%d,reserved\n" % (i, i * 37) for i in range(80))}
+
+    def make_canaries(self):
+        """Decoy files nobody legitimate touches. Ransomware that walks the folder hits one sooner or later,
+        even when it encrypts slowly or keeps file headers, which the 3-files rule and the header check miss."""
+        for name, r in self.roots.items():
+            if not os.path.isdir(r["path"]):
+                continue
+            dirs = [r["path"]] + sorted(os.path.join(r["path"], d) for d in os.listdir(r["path"])
+                                         if os.path.isdir(os.path.join(r["path"], d)))[:4]
+            for d in dirs:
+                for fn, body in self.CANARY_FILES.items():
+                    p = os.path.join(d, fn)
+                    if not os.path.exists(p):
+                        with open(p, "w") as f:
+                            f.write(body)
+                    self.canaries[os.path.abspath(p)] = (name, os.path.relpath(p, r["path"]))
+
+    def on_canary(self, path, how):
+        name, rel = self.canaries[os.path.abspath(path)]
+        print("%.3f CANARY_TOUCHED %s/%s (%s)" % (time.time(), name, rel, how), flush=True)
+        self.on_flag(name, rel, "C", "decoy file %s" % how, force=True)
+        if not self.contained:
+            self._contain("canary file %s: %s/%s" % (how, name, rel), [rel])     # no kill target found: still freeze
+
+    def note_burst(self, path):
+        n, w = self.cfg["burst_files"], self.cfg["burst_window_s"]
+        if not n:
+            return
+        now = time.time()
+        self.burst = [(t, p) for t, p in self.burst if now - t <= w] + [(now, path)]
+        if len({p for _, p in self.burst}) >= n and not self.contained:
+            print("%.3f BURST %d distinct files changed within %.0fs" % (now, n, w), flush=True)
+            self._contain("burst: %d files changed within %.0fs" % (n, w), [os.path.basename(p) for _, p in self.burst][:20])
 
     def heartbeat(self):
         """evidence/guard.json: proves the guard is alive; the dashboard reads it."""
@@ -71,6 +112,8 @@ class Guard:
         if vault.is_frozen():
             print("GUARD_FROZEN vault is frozen; restore then run: python3 vault.py unfreeze")
             return False
+        if self.cfg.get("canary"):
+            self.make_canaries()
         if not vault.sh("git", "log", "--oneline", "-1", check=False).stdout.strip():
             vault.commit_roots(self.cfg["roots"], "initial")   # first snapshot assumed clean
         if any(not os.path.isdir(os.path.join(vault.VAULT, "files", n)) for n in self.roots):
@@ -137,12 +180,12 @@ class Guard:
                 self.dirty_since = now
             self.last_event = now
 
-    def on_flag(self, name, rel, chk, detail):
+    def on_flag(self, name, rel, chk, detail, force=False):
         print("%.3f FLAGGED [check %s] %s/%s  %s" % (time.time(), chk, name, rel, detail), flush=True)
         rule = self.rules.get(name)
         if rule:
             before = rule.cooldown_until
-            rule.on_flag(rel)
+            rule.on_flag(rel, force=force)
             if rule.cooldown_until != before:          # kill rule fired
                 self._contain("kill rule fired on %s" % name, [rel])
 
@@ -161,6 +204,11 @@ class Guard:
                     if ev.is_directory or ev.event_type == "opened" or ev.event_type == "closed_no_write":
                         return
                     g.mark_dirty()
+                    for p in (ev.src_path, getattr(ev, "dest_path", "")):
+                        if p and os.path.abspath(p) in g.canaries and ev.event_type in ("modified", "deleted", "moved"):
+                            g.on_canary(p, ev.event_type)
+                    if ev.event_type in ("modified", "created", "moved") and os.path.abspath(ev.src_path) not in g.canaries:
+                        g.note_burst(ev.src_path)
                 def on_modified(self, ev):
                     if ev.is_directory:
                         return

@@ -10,8 +10,9 @@ set's creation options, so the existing ipset and iptables rule keep working.
 """
 import argparse, re, subprocess, sys, time
 
-LOGS = ["/var/log/parser_block.log", "/var/log/peer_block.log", "/var/log/flood_block.log"]
-LINE = re.compile(r"^(?:PARSER_BLOCK|PEER_BLOCK|FLOOD_BLOCK) ip=(\S+) ts=([\d.]+)")
+LOGS = ["/var/log/parser_block.log", "/var/log/peer_block.log", "/var/log/flood_block.log",
+        "/var/log/login_block.log", "/var/log/arp_alert.log"]
+LINE = re.compile(r"^(?:PARSER_BLOCK|PEER_BLOCK|FLOOD_BLOCK|LOGIN_BLOCK|ARP_BLOCK) ip=(\S+) ts=([\d.]+)")
 UNBLOCK = re.compile(r"^PEER_UNBLOCK ip=(\S+) ts=([\d.]+)")
 
 

@@ -130,8 +130,9 @@ def mitigation_commands(rate=200):
 
 
 class Reactor:
-    def __init__(self, dry, apply_mit, whitelist, chain):
+    def __init__(self, dry, apply_mit, whitelist, chain, prefix="FLOOD_BLOCK", log=None, tag="FLOOD"):
         self.dry, self.apply_mit, self.whitelist, self.chain = dry, apply_mit, whitelist, chain
+        self.prefix, self.log, self.tag = prefix, log or FLOOD_LOG, tag
         self.blocked = set()
         self.mitigated = False
         self.chain_report = None
@@ -143,7 +144,7 @@ class Reactor:
                 print("[WARN] chain reporting off:", e, flush=True)
 
     def handle(self, kind, ip, detail):
-        print("[FLOOD] %s %s  %s" % (kind, ip, detail), flush=True)
+        print("[%s] %s %s  %s" % (self.tag, kind, ip, detail), flush=True)
         if ip == "*":
             if not self.mitigated:
                 self.mitigated = True
@@ -159,11 +160,11 @@ class Reactor:
             r = subprocess.run(["ipset", "add", IPSET_NAME, ip, "-exist"], capture_output=True, text=True)
             if r.returncode != 0:
                 print("[ERROR] ipset add failed:", r.stderr.strip(), flush=True)
-        line = "FLOOD_BLOCK ip=%s ts=%.3f kind=%s" % (ip, time.time(), kind)
+        line = "%s ip=%s ts=%.3f kind=%s" % (self.prefix, ip, time.time(), kind)
         print(line, flush=True)
         if not self.dry:
             try:
-                with open(FLOOD_LOG, "a") as f:
+                with open(self.log, "a") as f:
                     f.write(line + "\n")
             except OSError:
                 pass

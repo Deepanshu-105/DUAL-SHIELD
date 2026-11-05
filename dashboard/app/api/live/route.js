@@ -6,13 +6,22 @@ const grab = (lines, re) => lines.map((l) => l.match(re)).filter(Boolean);
 
 export async function GET() {
   if (!MULTI) return Response.json({ multi: false });
-  const [pb, eb, watch, met, fl] = await Promise.all([
+  const [pb, eb, watch, met, fl, lg, ar, sn] = await Promise.all([
     agentLog("target", "parser_block", 50),
     agentLog("peer", "peer_block", 50),
     agentLog("target", "watch", 300),
     agentLog("target", "metrics", 100),
     agentLog("target", "flood", 100),
+    agentLog("target", "login", 100),
+    agentLog("target", "arp", 100),
+    agentLog("target", "sensor", 100),
   ]);
+  // v4: other Layer 1 detectors (all empty unless enabled on T): slow/stolen logins, ARP spoofing, fake sensor data
+  const others = {
+    login: grab(lg, /LOGIN_BLOCK ip=(\S+) ts=([\d.]+) kind=(\S+)/).length,
+    arp: grab(ar, /ARP_BLOCK ip=(\S+) ts=([\d.]+) kind=(\S+)/).length,
+    sensor: grab(sn, /SENSOR_ALERT id=(\S+) ts=([\d.]+) kind=(\S+)/).length,
+  };
   // v3: blocks made by the flood / port-scan detector (empty unless FLOOD=1 on T)
   const floods = grab(fl, /FLOOD_BLOCK ip=(\S+) ts=([\d.]+) kind=(\S+)/).map((m) => ({ ip: m[1], kind: m[3] })).filter((x) => !HIDE(x.ip));
   const lastFlood = floods.length ? floods[floods.length - 1] : null;
@@ -40,5 +49,5 @@ export async function GET() {
   const killMs = trig && killed ? +((+killed[1] - +trig[1]) * 1000).toFixed(2) : null;
   const flagToKillMs = flags.length && killed ? Math.round((+killed[1] - +flags[0][1]) * 1000) : null;
 
-  return Response.json({ multi: true, ip: t ? t.ip : null, dropMs, peerMs, clockWarning, killMs, flagToKillMs, floods: floods.length, lastFlood });
+  return Response.json({ multi: true, ip: t ? t.ip : null, dropMs, peerMs, clockWarning, killMs, flagToKillMs, floods: floods.length, lastFlood, others });
 }

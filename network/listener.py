@@ -26,7 +26,18 @@ def block(ip):
         f.write(line + "\n")
 
 
+def sensor_event(kind, sid):
+    """v4: the chain can also confirm a misbehaving SENSOR (id like 'sensor:traffic-12'). No firewall rule
+    applies: peers record it so gateways/dashboards stop trusting that sensor."""
+    line = "SENSOR_%s id=%s ts=%.3f" % (kind, sid, time.time())
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
 def unblock(ip):
+    if ip.startswith("sensor:"):
+        return sensor_event("RELEASE", ip[7:])
     ipaddress.ip_address(ip)
     subprocess.run(["ipset", "del", "city_blacklist", ip, "-exist"], check=True)
     line = "PEER_UNBLOCK ip=%s ts=%.3f reason=overruled" % (ip, time.time())
@@ -57,6 +68,9 @@ def run():
                         continue
                     ip, ja3, count = decode(["string", "bytes32", "uint256"], bytes(lg["data"]))
                     print("EVENT ip=%s count=%d" % (ip, count), flush=True)
+                    if ip.startswith("sensor:"):
+                        sensor_event("QUARANTINE", ip[7:])
+                        continue
                     block(ip)
                 last = head
             time.sleep(POLL)
