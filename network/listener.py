@@ -12,12 +12,35 @@ LOG = "/var/log/peer_block.log"
 
 h = Web3.keccak(text="ThreatConsensusReached(string,bytes32,uint256)").hex()
 TOPIC = h if h.startswith("0x") else "0x" + h
+# v3: governance can overrule a confirmed block (collusion / false positive): then every peer lifts it.
+h2 = Web3.keccak(text="ThreatOverruled(string,uint256)").hex()
+TOPIC_OVERRULED = h2 if h2.startswith("0x") else "0x" + h2
 
 
 def block(ip):
     ipaddress.ip_address(ip)
     subprocess.run(["ipset", "add", "city_blacklist", ip, "-exist"], check=True)
     line = "PEER_BLOCK ip=%s ts=%.3f" % (ip, time.time())
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def sensor_event(kind, sid):
+    """v4: the chain can also confirm a misbehaving SENSOR (id like 'sensor:traffic-12'). No firewall rule
+    applies: peers record it so gateways/dashboards stop trusting that sensor."""
+    line = "SENSOR_%s id=%s ts=%.3f" % (kind, sid, time.time())
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def unblock(ip):
+    if ip.startswith("sensor:"):
+        return sensor_event("RELEASE", ip[7:])
+    ipaddress.ip_address(ip)
+    subprocess.run(["ipset", "del", "city_blacklist", ip, "-exist"], check=True)
+    line = "PEER_UNBLOCK ip=%s ts=%.3f reason=overruled" % (ip, time.time())
     print(line, flush=True)
     with open(LOG, "a") as f:
         f.write(line + "\n")
@@ -34,11 +57,20 @@ def run():
                 last = head
                 print("subscribed: polling from block %d" % head, flush=True)
             elif head > last:
-                logs = w3.eth.get_logs({"address": addr, "topics": [TOPIC],
+                logs = w3.eth.get_logs({"address": addr, "topics": [[TOPIC, TOPIC_OVERRULED]],
                                         "fromBlock": last + 1, "toBlock": head})
                 for lg in logs:
+                    t0 = lg["topics"][0].hex()
+                    if (t0 if t0.startswith("0x") else "0x" + t0) == TOPIC_OVERRULED:
+                        ip, n = decode(["string", "uint256"], bytes(lg["data"]))
+                        print("OVERRULED ip=%s slashed=%d" % (ip, n), flush=True)
+                        unblock(ip)
+                        continue
                     ip, ja3, count = decode(["string", "bytes32", "uint256"], bytes(lg["data"]))
                     print("EVENT ip=%s count=%d" % (ip, count), flush=True)
+                    if ip.startswith("sensor:"):
+                        sensor_event("QUARANTINE", ip[7:])
+                        continue
                     block(ip)
                 last = head
             time.sleep(POLL)

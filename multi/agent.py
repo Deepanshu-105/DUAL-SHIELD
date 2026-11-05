@@ -33,6 +33,10 @@ LOGS = {
     "parser_block": "/var/log/parser_block.log",
     "peer_block": "/var/log/peer_block.log",
     "metrics": "/var/log/metrics.log",
+    "flood": "/var/log/flood_block.log",
+    "login": "/var/log/login_block.log",
+    "arp": "/var/log/arp_alert.log",
+    "sensor": "/var/log/sensor_alert.log",
     "watch": os.path.join(RDIR, "evidence", "watch.log"),
 }
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")

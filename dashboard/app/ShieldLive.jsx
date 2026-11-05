@@ -156,6 +156,8 @@ export default function ShieldLive() {
     { label: "Peer blocked after target", value: live.clockWarning ? "clocks differ" : fmt(live.peerMs), note: "T to P, clock-synced estimate" },
     { label: "Kill after trigger", value: fmt(live.killMs), note: "KILL_TRIGGER to process dead, laptop T" },
     { label: "First flag to kill", value: fmt(live.flagToKillMs), note: "laptop T" },
+    { label: "Other alerts", value: String((live.others ? live.others.login + live.others.arp + live.others.sensor : 0)), note: live.others ? "logins " + live.others.login + ", ARP " + live.others.arp + ", sensors " + live.others.sensor : "login / ARP / sensor detectors off" },
+    { label: "Flood / scan blocks", value: String(live.floods ?? 0), note: live.lastFlood ? live.lastFlood.kind + " from " + live.lastFlood.ip : "detector off or nothing seen (FLOOD=1 on T)" },
     { label: "Rollback restore", value: restoreMs ? restoreMs + " ms" : "click rollback", note: "files restored on T" },
     { label: "Rollback click, end to end", value: rb && rb.ms ? fmt(rb.ms) : "click rollback", note: "D to T over the network, includes the chain check" },
   ];

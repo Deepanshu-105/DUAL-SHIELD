@@ -81,8 +81,9 @@ class KillRule:
         self.cooldown_until = 0.0
         self.safe = _ancestors()
 
-    def on_flag(self, rel):
-        """Call once per FLAGGED line. Returns the list of killed PIDs (usually [])."""
+    def on_flag(self, rel, force=False):
+        """Call once per FLAGGED line. Returns the list of killed PIDs (usually []).
+        force=True skips the 3-file threshold (used when a canary/decoy file is touched)."""
         now = time.monotonic()
         if now < self.cooldown_until:
             return []
@@ -96,7 +97,7 @@ class KillRule:
         # remember who has the folder open right now (cheap, one /proc pass)
         self.suspects |= pids_with_open_file_under(self.watch_dir) - self.safe
 
-        if len(self.recent) < self.threshold:
+        if len(self.recent) < self.threshold and not force:   # force: a decoy file was touched
             return []
 
         t_trigger = time.time()
