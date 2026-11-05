@@ -17,6 +17,9 @@ Kinds: overrule, protect, unprotect, add-node, revoke-node, add-governor, remove
 deployment each governor signs with their own key). --node takes an account index or an 0x address.
 """
 import argparse, json, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ipcrypt
 from web3 import Web3
 
 KINDS = {"overrule": 1, "protect": 2, "unprotect": 3, "add-node": 4, "revoke-node": 5, "add-governor": 6,
@@ -68,7 +71,7 @@ def main():
     if a.cmd == "propose":
         if a.arg not in KINDS:
             sys.exit("kind must be one of: " + ", ".join(KINDS))
-        r = send(c.functions.propose(KINDS[a.arg], a.ip, addr(a.node), a.value), a.signer)
+        r = send(c.functions.propose(KINDS[a.arg], ipcrypt.encode(a.ip) if a.ip else a.ip, addr(a.node), a.value), a.signer)
         print("proposal sent, gas", r.gasUsed)
         show_proposal(c.functions.proposalCount().call() - 1)
         return

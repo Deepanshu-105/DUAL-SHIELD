@@ -148,6 +148,7 @@ export default function ShieldLive() {
     { label: "Guard", value: rec.guard_alive ? "running" : "stopped", note: rec.guard ? "kill " + (rec.guard.kill ? "on" : "off") + ", held files " + rec.guard.held : "start guard.py", bad: !rec.guard_alive },
     { label: "Containment", value: rec.containment ? rec.containment.mode.toUpperCase() : "idle", note: rec.containment ? rec.containment.reason : "no attack seen", bad: !!rec.containment },
     { label: "Off-machine copy", value: rec.push ? (rec.push.ok ? "pushed" : "FAILED") : rec.remote ? "waiting" : "not set", note: rec.push ? "rev " + rec.push.rev + ", " + age(rec.now - rec.push.t) : "set remote in protect.json", bad: rec.push && !rec.push.ok },
+    { label: "Self-protection", value: rec.selfguard ? (rec.selfguard.ok ? "OK" : "ALERT") : "not running", note: rec.selfguard ? (rec.selfguard.tampered && rec.selfguard.tampered.length ? "code changed: " + rec.selfguard.tampered.length + " files" : rec.selfguard.down && rec.selfguard.down.length ? "down: " + rec.selfguard.down.join(", ") : "code unchanged, " + (rec.encrypted ? "vault encrypted" : "vault not encrypted")) : "run multi/selfguard.py", bad: rec.selfguard && !rec.selfguard.ok },
     { label: "Last recovery", value: rec.recovery ? (rec.recovery.ok ? "OK" : "FAILED") : "none yet", note: rec.recovery ? (rec.recovery.ok ? rec.recovery.files + " files, " + rec.recovery.ms + " ms, rev " + rec.recovery.rev + (rec.recovery.anchor ? ", chain " + rec.recovery.anchor : "") : "no verified snapshot") : "", bad: rec.recovery && !rec.recovery.ok },
   ];
 

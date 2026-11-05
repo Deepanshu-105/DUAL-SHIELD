@@ -1,7 +1,10 @@
 """Peer listener: polls the chain over HTTP for ThreatConsensusReached and blocks the IP.
 Polling by block number (not a websocket subscription) so a dropped connection can never
 silently lose events: every block after the last one seen is queried."""
-import ipaddress, json, os, subprocess, time
+import ipaddress, json, os, subprocess, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ipcrypt
 from eth_abi import decode
 from web3 import Web3
 
@@ -63,10 +66,18 @@ def run():
                     t0 = lg["topics"][0].hex()
                     if (t0 if t0.startswith("0x") else "0x" + t0) == TOPIC_OVERRULED:
                         ip, n = decode(["string", "uint256"], bytes(lg["data"]))
+                        ip = ipcrypt.decode(ip)
+                        if ip is None:
+                            print("UNREADABLE_EVENT (encrypted threat, wrong or missing CHAIN_IP_KEY)", flush=True)
+                            continue
                         print("OVERRULED ip=%s slashed=%d" % (ip, n), flush=True)
                         unblock(ip)
                         continue
                     ip, ja3, count = decode(["string", "bytes32", "uint256"], bytes(lg["data"]))
+                    ip = ipcrypt.decode(ip)
+                    if ip is None:
+                        print("UNREADABLE_EVENT (encrypted threat, wrong or missing CHAIN_IP_KEY)", flush=True)
+                        continue
                     print("EVENT ip=%s count=%d" % (ip, count), flush=True)
                     if ip.startswith("sensor:"):
                         sensor_event("QUARANTINE", ip[7:])

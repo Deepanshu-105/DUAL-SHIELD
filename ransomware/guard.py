@@ -19,6 +19,7 @@ import detect, vault, containment
 DEFAULTS = {"debounce_s": 2.0, "max_wait_s": 30.0, "gate_threshold": 3,
             "release_after_s": 60.0, "kill": True, "contain": "dry", "allow": [],
             "remote": "",
+            "encrypt": False,       # True: vault content is AES-256-GCM encrypted in git and on the remote
             "canary": False,        # decoy files in every root: touching one = instant kill (catches slow ransomware)
             "burst_files": 0,       # 0 = off. N = freeze+contain if N distinct files change within burst_window_s
             "burst_window_s": 5.0}      # remote: a git URL or path; every commit is pushed there (off-machine copy)
@@ -107,6 +108,8 @@ class Guard:
         os.makedirs("evidence", exist_ok=True)
         if not os.path.isdir(os.path.join(vault.VAULT, ".git")):
             vault.init(self.cfg["roots"][0]["path"])
+        if self.cfg.get("encrypt"):
+            vault.encrypt_on()
         if self.cfg.get("remote"):
             vault.init(self.cfg["roots"][0]["path"], self.cfg["remote"])
         if vault.is_frozen():

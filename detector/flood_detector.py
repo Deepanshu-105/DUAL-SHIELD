@@ -21,6 +21,9 @@ fails against spoofed sources. This layer handles small and medium floods and sh
 """
 import argparse, collections, os, socket, struct, subprocess, sys, threading, time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from netset import NetSet, from_env
+
 IPSET_NAME = "city_blacklist"
 FLOOD_LOG = "/var/log/flood_block.log"
 DEFAULT_WL = {"172.30.0.1", "172.30.0.11"}
@@ -34,7 +37,7 @@ class FloodAnalyzer:
         self.syn_rate, self.udp_rate, self.window = syn_rate, udp_rate, window
         self.scan_ports, self.scan_window = scan_ports, scan_window
         self.total_rate, self.min_sources, self.top_n = total_rate, min_sources, top_n
-        self.whitelist, self.cooldown = set(whitelist), cooldown
+        self.whitelist, self.cooldown = NetSet(whitelist) | from_env(), cooldown
         self.syn = collections.defaultdict(collections.deque)      # src -> timestamps of new connections
         self.udp = collections.defaultdict(collections.deque)
         self.ports = collections.defaultdict(collections.deque)    # src -> (ts, port)
@@ -131,7 +134,8 @@ def mitigation_commands(rate=200):
 
 class Reactor:
     def __init__(self, dry, apply_mit, whitelist, chain, prefix="FLOOD_BLOCK", log=None, tag="FLOOD"):
-        self.dry, self.apply_mit, self.whitelist, self.chain = dry, apply_mit, whitelist, chain
+        self.dry, self.apply_mit, self.chain = dry, apply_mit, chain
+        self.whitelist = NetSet(whitelist) | from_env()
         self.prefix, self.log, self.tag = prefix, log or FLOOD_LOG, tag
         self.blocked = set()
         self.mitigated = False

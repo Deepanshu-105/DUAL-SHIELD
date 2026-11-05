@@ -1,0 +1,279 @@
+{
+ "benign": [
+  {
+   "area": "network",
+   "case": "300 normal clients, 5 min",
+   "events": 9100,
+   "false_alarms": 0,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "shared NAT address, 60/s with bursts",
+   "events": 4026,
+   "false_alarms": 1,
+   "note": "false alarms here are real users blocked; use WHITELIST_CIDRS"
+  },
+  {
+   "area": "login",
+   "case": "500 users, some mistype (0-3 typos)",
+   "events": 642,
+   "false_alarms": 0,
+   "note": "login-after-fails fires after >=4 failures (default); lower --after-fails to catch more, at the cost of flagging careless users"
+  },
+  {
+   "area": "arp",
+   "case": "59 hosts, one device replaced, 200 s",
+   "events": 100,
+   "false_alarms": 0,
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "100 temperature sensors, 600 readings each",
+   "events": 60000,
+   "false_alarms": 0,
+   "note": ""
+  },
+  {
+   "area": "ransomware",
+   "case": "append to 30 log files",
+   "events": 30,
+   "false_alarms": 0,
+   "note": ""
+  },
+  {
+   "area": "ransomware",
+   "case": "edit the start of 30 text files",
+   "events": 30,
+   "false_alarms": 30,
+   "note": "header check A fires on any change of the first 16 bytes; the vault gate holds such files back, it does not freeze for 1-2 of them"
+  },
+  {
+   "area": "ransomware",
+   "case": "re-save 10 zip files",
+   "events": 10,
+   "false_alarms": 10,
+   "note": ""
+  }
+ ],
+ "attacks": [
+  {
+   "area": "network",
+   "case": "SYN flood from one source, 50/s",
+   "detected": false,
+   "latency": null,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "SYN flood from one source, 100/s",
+   "detected": true,
+   "latency": 1.99,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "SYN flood from one source, 200/s",
+   "detected": true,
+   "latency": 0.99,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "SYN flood from one source, 1000/s",
+   "detected": true,
+   "latency": 0.2,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "port scan, 5 ports/s",
+   "detected": true,
+   "latency": 3.8,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "port scan, 20 ports/s",
+   "detected": true,
+   "latency": 0.95,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "port scan, 100 ports/s",
+   "detected": true,
+   "latency": 0.19,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "slow port scan, 1 port/s",
+   "detected": false,
+   "latency": null,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "UDP flood, 500/s",
+   "detected": true,
+   "latency": 1.2,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "botnet, 100 sources x 8/s (total 800/s)",
+   "detected": true,
+   "latency": 1.0,
+   "note": ""
+  },
+  {
+   "area": "network",
+   "case": "botnet, 100 sources x 3/s (total 300/s)",
+   "detected": false,
+   "latency": null,
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "slow brute force, 1 try / 60 s",
+   "detected": true,
+   "latency": "after 10 attempts",
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "slow brute force, 1 try / 120 s",
+   "detected": false,
+   "latency": null,
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "password spraying, 6 users, 1 try each / 40 s",
+   "detected": true,
+   "latency": "after 5 attempts",
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "distributed guessing, 4 IPs, 1 try / 20 s",
+   "detected": true,
+   "latency": "after 15 attempts",
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "guessed password works (5 failures then success)",
+   "detected": true,
+   "latency": "after 6 attempts",
+   "note": ""
+  },
+  {
+   "area": "login",
+   "case": "stolen password, first try, normal IP and hour",
+   "detected": false,
+   "latency": null,
+   "note": ""
+  },
+  {
+   "area": "arp",
+   "case": "gateway MAC replaced by attacker",
+   "detected": true,
+   "latency": "1st table poll (<= poll interval)",
+   "note": ""
+  },
+  {
+   "area": "arp",
+   "case": "attacker clones the gateway's MAC (gateway entry unchanged)",
+   "detected": false,
+   "latency": null,
+   "note": "not detectable from the table alone"
+  },
+  {
+   "area": "sensor",
+   "case": "out-of-range spike (70 C)",
+   "detected": true,
+   "latency": "1st reading",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "sudden +6 C step in 2 s",
+   "detected": true,
+   "latency": "1st reading",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "slow drift +0.4 C/s (each step legal)",
+   "detected": true,
+   "latency": "after 11 readings",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "frozen sensor (same value)",
+   "detected": true,
+   "latency": "after 9 readings",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "replayed old message",
+   "detected": true,
+   "latency": "1st reading",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "forged message (no valid signature), when signing is on",
+   "detected": true,
+   "latency": "1st reading",
+   "note": ""
+  },
+  {
+   "area": "sensor",
+   "case": "plausible fake value matching neighbours (+0.6 C)",
+   "detected": false,
+   "latency": null,
+   "note": "by design not detectable"
+  },
+  {
+   "area": "ransomware",
+   "case": "full encryption (AES-CTR, whole file)",
+   "detected": true,
+   "latency": "50 of 50 files flagged (30 of 30 text files)",
+   "note": "kill rule needs 3 flagged files"
+  },
+  {
+   "area": "ransomware",
+   "case": "header preserved, rest encrypted",
+   "detected": true,
+   "latency": "40 of 50 files flagged (30 of 30 text files)",
+   "note": "kill rule needs 3 flagged files"
+  },
+  {
+   "area": "ransomware",
+   "case": "first 25% encrypted (partial)",
+   "detected": true,
+   "latency": "50 of 50 files flagged (30 of 30 text files)",
+   "note": "kill rule needs 3 flagged files"
+  },
+  {
+   "area": "ransomware",
+   "case": "first 4 KB only encrypted",
+   "detected": true,
+   "latency": "50 of 50 files flagged (30 of 30 text files)",
+   "note": "kill rule needs 3 flagged files"
+  },
+  {
+   "area": "ransomware",
+   "case": "intermittent: 4 KB encrypted every 16 KB",
+   "detected": true,
+   "latency": "50 of 50 files flagged (30 of 30 text files)",
+   "note": "kill rule needs 3 flagged files"
+  }
+ ]
+}

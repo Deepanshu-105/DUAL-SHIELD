@@ -1,4 +1,7 @@
 import ipaddress, json, os, subprocess, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ipcrypt
 from web3 import Web3
 
 DEP = json.load(open(os.environ.get("DEPLOY", "/opt/shield/localhost.json")))
@@ -7,7 +10,7 @@ c = w3.eth.contract(address=Web3.to_checksum_address(DEP["address"]), abi=DEP["a
 
 def report_to_chain(ip, fingerprint="manual", who=1):
     """Call this from detector/ssh_parser.py right after its ipset add."""
-    tx = c.functions.reportThreat(ip, Web3.keccak(text=fingerprint)).transact(
+    tx = c.functions.reportThreat(ipcrypt.encode(ip), Web3.keccak(text=fingerprint)).transact(
         {"from": w3.eth.accounts[who]})
     w3.eth.wait_for_transaction_receipt(tx)
 

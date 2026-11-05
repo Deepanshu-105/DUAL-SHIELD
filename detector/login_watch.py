@@ -22,6 +22,7 @@ import argparse, collections, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flood_detector import Reactor
+from netset import NetSet, from_env
 
 LOG_PATH = os.environ.get("LOG_PATH", "/var/log/auth.log")
 LOGIN_LOG = "/var/log/login_block.log"
@@ -32,12 +33,12 @@ OK = re.compile(r"Accepted \S+ for (\S+) from " + IP)
 
 
 class LoginAnalyzer:
-    def __init__(self, window=600, slow_fails=10, spray_users=5, dist_fails=15, dist_ips=3, after_fails=2,
+    def __init__(self, window=600, slow_fails=10, spray_users=5, dist_fails=15, dist_ips=3, after_fails=4,
                  allow_ips=(), hours=None, tor=(), whitelist=(), cooldown=600):
         self.window, self.slow_fails, self.spray_users = window, slow_fails, spray_users
         self.dist_fails, self.dist_ips, self.after_fails = dist_fails, dist_ips, after_fails
         self.allow_ips, self.hours, self.tor = set(allow_ips), hours, set(tor)
-        self.whitelist, self.cooldown = set(whitelist), cooldown
+        self.whitelist, self.cooldown = NetSet(whitelist) | from_env(), cooldown
         self.fails = collections.deque()          # (ts, ip, user)
         self.flagged = {}
 
@@ -124,7 +125,7 @@ def main():
     ap.add_argument("--spray-users", type=int, default=5)
     ap.add_argument("--dist-fails", type=int, default=15)
     ap.add_argument("--dist-ips", type=int, default=3)
-    ap.add_argument("--after-fails", type=int, default=2)
+    ap.add_argument("--after-fails", type=int, default=4)
     ap.add_argument("--allow-ips", default="")
     ap.add_argument("--hours", default="", help="working hours, e.g. 7-20")
     a = ap.parse_args()

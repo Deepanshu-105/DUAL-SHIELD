@@ -38,6 +38,21 @@ WHITELIST = {"172.30.0.1", "172.30.0.11"}
 # Four-laptop mode: the dashboard and peer laptops are added through WHITELIST_EXTRA="ip1,ip2".
 WHITELIST |= {x.strip() for x in os.environ.get("WHITELIST_EXTRA", "").split(",") if x.strip()}
 
+# Optional: whole networks that must never be blocked (shared campus/mobile NAT), e.g. WHITELIST_CIDRS="10.0.0.0/8,192.168.0.0/16"
+try:
+    import ipaddress as _ipa
+    _NEVER_NETS = [_ipa.ip_network(x.strip(), strict=False) for x in os.environ.get("WHITELIST_CIDRS", "").split(",") if x.strip()]
+except ValueError:
+    _NEVER_NETS = []
+
+
+def _never_block(ip):
+    if not _NEVER_NETS:
+        return False
+    a = _ipa.ip_address(ip)
+    return any(a in n for n in _NEVER_NETS)
+
+
 FAIL_PATTERN = re.compile(
     r"Failed password for (?:invalid user )?\S+ from (\d{1,3}(?:\.\d{1,3}){3})"
 )
@@ -136,7 +151,7 @@ def block_ip(ip, t_detect=None):
 
 # ---------------------------------------------------------------- detection
 def record_failure(ip):
-    if ip in WHITELIST:
+    if ip in WHITELIST or _never_block(ip):
         print(f"[SKIP] {ip} is whitelisted, failure not counted", flush=True)
         return
     now = time.time()
