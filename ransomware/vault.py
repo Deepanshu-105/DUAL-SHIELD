@@ -62,6 +62,11 @@ def freeze(reason="manual"):
 def unfreeze():
     if os.path.exists(LOCK):
         os.remove(LOCK)
+        try:                      # the incident is over: archive its attack-type verdict instead of showing it forever
+            if os.path.exists("evidence/ransom_class.json"):
+                os.replace("evidence/ransom_class.json", "evidence/ransom_class.%d.json" % int(time.time()))
+        except OSError:
+            pass
         print("VAULT_UNFROZEN")
     else:
         print("VAULT_NOT_FROZEN")
@@ -281,7 +286,8 @@ def summary():
     out["push"] = json.load(open(pj)) if os.path.exists(pj) else None
     for key, path in (("guard", "evidence/guard.json"), ("containment", "evidence/containment.json"),
                       ("recovery", "evidence/recovery_report.json"),
-                      ("selfguard", "evidence/selfguard.json")):
+                      ("selfguard", "evidence/selfguard.json"),
+                      ("classification", "evidence/ransom_class.json")):
         if os.path.exists(path):
             try:
                 out[key] = json.load(open(path))

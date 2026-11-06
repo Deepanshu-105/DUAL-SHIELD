@@ -53,6 +53,7 @@ def build_baseline(folder):
                 blocks.append({"off": off, "chi2": c, "nonuniform": c > CHI_LIMIT})
         first = blocks[0] if blocks and blocks[0]["off"] == 0 else None
         base[rel] = {
+            "size": size,
             "header": head.hex(),
             "chi2": first["chi2"] if first else None,
             "was_nonuniform": bool(first and first["nonuniform"]),
@@ -83,6 +84,25 @@ def check_file(path, rel, base):
     except FileNotFoundError:
         return None, ""
     return None, ""
+
+
+def is_wiped(path, b):
+    """True when a file that had content was truncated to nothing or overwritten with filler (one repeated byte).
+    A destroyed file is not 'encrypted' (check B) and its header may well be intact, so it needs its own test."""
+    try:
+        size = os.path.getsize(path)
+        if b.get("size", 0) > 0 and size == 0:
+            return True
+        if size >= 512 and b.get("size", 0) >= 512:
+            data = read_block(path)
+            top = max(data.count(bytes([x])) for x in set(data)) if data else 0
+            bh = bytes.fromhex(b["header"]) if b.get("header") else b""
+            was_filler = len(bh) >= 8 and len(set(bh)) == 1
+            if data and top / len(data) >= 0.99 and not was_filler:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
 
 
 def scan(folder, base):
