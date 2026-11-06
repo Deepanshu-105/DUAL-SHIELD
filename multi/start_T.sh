@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 need_root; need_venv
 [ ${#AGENT_SECRET_T} -ge 16 ] || { echo "AGENT_SECRET_T missing in multi/config.env (run multi/gen_secrets.sh on D)"; exit 1; }
 export PATH="$VENV/bin:$PATH"
+pkill -f multi/join.py 2>/dev/null
+resolve_peers target
 
 pkill -f ssh_parser.py 2>/dev/null; pkill -f flood_detector.py 2>/dev/null; pkill -f expire_blocks.py 2>/dev/null; pkill -f login_watch.py 2>/dev/null; pkill -f arp_watch.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
 service ssh start 2>/dev/null || service sshd start

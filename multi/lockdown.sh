@@ -11,6 +11,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
 need_root
 ROLE="$1"
+if [ "${DISCOVERY:-0}" = "1" ] && [ -f "$ROOT/multi/peers.json" ]; then   # fill T_IP / P_IP from the registry
+  eval "$(python3 - "$ROOT/multi/peers.json" <<'PY'
+import json, sys, time
+d = json.load(open(sys.argv[1])); ttl = d.get("ttl", 120)
+for role, key in (("target", "T_IP"), ("peer", "P_IP")):
+    p = d.get("peers", {}).get(role)
+    if p and time.time() - p["last"] <= 3 * ttl:
+        print("%s=%s" % (key, p["ip"]))
+PY
+)"
+fi
 CH=DS_LOCK
 iptables -D INPUT -j $CH 2>/dev/null
 iptables -F $CH 2>/dev/null; iptables -X $CH 2>/dev/null

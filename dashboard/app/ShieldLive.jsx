@@ -17,8 +17,18 @@ export default function ShieldLive() {
   const [mx, setMx] = useState([]);
   const [live, setLive] = useState({ multi: false });
   const [rec, setRec] = useState({ available: false });
+  const [nodes, setNodes] = useState({ discovery: false, peers: {} });
   const [recOut, setRecOut] = useState(null);
   const [recBusy, setRecBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try { const r = await fetch("/api/peers", { cache: "no-store" }); if (alive) setNodes(await r.json()); } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +162,11 @@ export default function ShieldLive() {
     { label: "Last recovery", value: rec.recovery ? (rec.recovery.ok ? "OK" : "FAILED") : "none yet", note: rec.recovery ? (rec.recovery.ok ? rec.recovery.files + " files, " + rec.recovery.ms + " ms, rev " + rec.recovery.rev + (rec.recovery.anchor ? ", chain " + rec.recovery.anchor : "") : "no verified snapshot") : "", bad: rec.recovery && !rec.recovery.ok },
   ];
 
+  const nodeTiles = !nodes.discovery ? [] : [["target", "Target (T)"], ["peer", "Peer (P)"]].map(([role, label]) => {
+    const p = nodes.peers[role];
+    return { label: "Node " + label, value: p ? (p.online ? "online" : "OFFLINE") : "not joined", note: p ? p.ip + ", heartbeat " + age(p.age) : "waiting for it to register", bad: !p || !p.online };
+  });
+
   const thisRun = !live.multi ? [] : [
     { label: "Local block on target", value: fmt(live.dropMs), note: "log line to ipset, laptop T" },
     { label: "Peer blocked after target", value: live.clockWarning ? "clocks differ" : fmt(live.peerMs), note: "T to P, clock-synced estimate" },
@@ -248,6 +263,17 @@ export default function ShieldLive() {
           </pre>
         )}
       </div>
+      {nodeTiles.length > 0 && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
+          {nodeTiles.map((m) => (
+            <div key={m.label} style={{ background: m.bad ? "#c62828" : "#1b4332", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+              <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+              <div style={{ fontSize: 22 }}>{m.value}</div>
+              <div style={{ fontSize: 11, opacity: 0.75 }}>{m.note}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <h2 style={{ marginTop: 24 }}>Recovery vault (Layer 2)</h2>
       {!rec.available ? (
         <div style={{ color: "#555" }}>Vault not started yet. {rec.error ? "(" + rec.error + ")" : "Run guard.py on the target."}</div>

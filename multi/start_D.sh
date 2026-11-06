@@ -19,6 +19,11 @@ echo
 echo "Chain:     http://$D_IP:8545   (run sudo multi/lockdown.sh D so only T and P can reach it)"
 echo "Dashboard: http://localhost:3000   login: operator / DASH_PASS   (T and P fetch the contract from http://$D_IP:3000/localhost.json)"
 echo "Now start T and P (sudo multi/start_T.sh, sudo multi/start_P.sh). Dashboard starting ..."
+if [ "${DISCOVERY:-0}" = "1" ]; then
+  pkill -f multi/registry.py 2>/dev/null
+  nohup env AGENT_SECRET_T="$AGENT_SECRET_T" AGENT_SECRET_P="$AGENT_SECRET_P" REGISTRY_PORT="${REGISTRY_PORT:-8801}" python3 -u "$ROOT/multi/registry.py" > /var/log/registry.out 2>&1 &
+  echo "Registry:  :${REGISTRY_PORT:-8801}   (T and P find each other through it; log /var/log/registry.out)"
+fi
 cd "$ROOT/dashboard"
-MULTI=1 TARGET_AGENT="http://$T_IP:8800" PEER_AGENT="http://$P_IP:8800" ATTACKER_IP="$A_IP" \
+DISCOVERY="${DISCOVERY:-0}" MULTI=1 TARGET_AGENT="http://$T_IP:8800" PEER_AGENT="http://$P_IP:8800" ATTACKER_IP="$A_IP" \
   exec npm run dev -- -H 0.0.0.0

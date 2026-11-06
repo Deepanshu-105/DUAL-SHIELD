@@ -4,7 +4,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
 need_root; need_venv
 [ ${#AGENT_SECRET_P} -ge 16 ] || { echo "AGENT_SECRET_P missing in multi/config.env (run multi/gen_secrets.sh on D)"; exit 1; }
-pkill -f network/listener.py 2>/dev/null; pkill -f expire_blocks.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
+pkill -f network/listener.py 2>/dev/null; pkill -f expire_blocks.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null; pkill -f multi/join.py 2>/dev/null
+resolve_peers peer
 ipset create city_blacklist hash:ip -exist
 ipset flush city_blacklist
 iptables -C INPUT -m set --match-set city_blacklist src -j DROP 2>/dev/null || \
