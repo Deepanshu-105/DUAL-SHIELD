@@ -16,6 +16,7 @@ ipset create city_blacklist hash:ip -exist
 ipset flush city_blacklist
 : > /var/log/parser_block.log; : > /var/log/metrics.log
 
+tls_chain_door
 fetch_deploy || { echo "FAIL: cannot fetch the contract from http://$D_IP:3000 (is start_D.sh running?)"; exit 1; }
 curl -sf -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
   "$CHAIN_HTTP" | grep -q result || { echo "FAIL: chain not reachable at $CHAIN_HTTP"; exit 1; }

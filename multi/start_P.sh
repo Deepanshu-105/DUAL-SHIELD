@@ -12,6 +12,7 @@ iptables -C INPUT -m set --match-set city_blacklist src -j DROP 2>/dev/null || \
   iptables -I INPUT -m set --match-set city_blacklist src -j DROP
 : > /var/log/peer_block.log
 
+tls_chain_door
 fetch_deploy || { echo "FAIL: cannot fetch the contract from http://$D_IP:3000 (is start_D.sh running?)"; exit 1; }
 AGENT_SECRET="$AGENT_SECRET_P" ROLE=peer SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
 if [ "${BLOCK_TTL:-0}" -gt 0 ] 2>/dev/null; then

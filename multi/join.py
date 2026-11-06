@@ -7,7 +7,9 @@
 Registers this laptop with D (signed), fetches the peer table (answer signature verified), and writes
 multi/peers.env with T_IP= / P_IP= for the online peers (the start scripts source it). Exit 0 when joined.
 """
-import argparse, hashlib, hmac, json, os, secrets as rnd, sys, time, urllib.request, urllib.error
+import argparse, hashlib, hmac, json, os, secrets as rnd, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tlsutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENVFILE = os.environ.get("PEERS_ENV", os.path.join(HERE, "peers.env"))
@@ -25,12 +27,7 @@ def call(base, secret, method, path, role, body=None, timeout=5):
         data = json.dumps(dict(body, role=role, ts=ts, nonce=nonce, sig=sign(secret, "register", role, body.get("name", ""), ts, nonce))).encode()
     else:
         headers.update({"X-Role": role, "X-Ts": ts, "X-Nonce": nonce, "X-Sig": sign(secret, "peers", role, ts, nonce)})
-    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
-    try:
-        r = urllib.request.urlopen(req, timeout=timeout)
-        code, raw, hdr = r.status, r.read(), r.headers
-    except urllib.error.HTTPError as e:
-        code, raw, hdr = e.code, e.read(), e.headers
+    code, raw, hdr = tlsutil.request(base, method, path, headers, data, expect_cn="dualshield-dashboard", timeout=timeout)
     want = sign(secret, nonce, str(code), hashlib.sha256(raw).hexdigest())
     if code in (200, 409) and not hmac.compare_digest(want, hdr.get("X-Resp-Sig", "")):
         raise ValueError("registry answer is not signed correctly (wrong server or man in the middle)")
@@ -70,14 +67,14 @@ def main():
     d = os.environ.get("D_IP", "")
     if role not in KEYS or len(secret) < 16 or not d:
         sys.exit("need ROLE (target|peer), AGENT_SECRET and D_IP in the environment")
-    base = "http://%s:%s" % (d, os.environ.get("REGISTRY_PORT", "8801"))
+    base = "%s://%s:%s" % ("https" if tlsutil.enabled() else "http", d, os.environ.get("REGISTRY_PORT", "8801"))
     name = os.environ.get("NODE_NAME", "")
     other = "P_IP" if role == "target" else "T_IP"
     t0 = time.time()
     while True:
         try:
             ok, res = once(base, secret, role, name)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError) as e:      # includes ssl errors (wrong CA, wrong role certificate)
             ok, res = False, str(e)
         if ok:
             print("JOIN_OK %s" % " ".join(res), flush=True)

@@ -12,9 +12,13 @@ The address that is stored is the TCP source address of the request, never a val
 Safeguards: stale or replayed requests refused; unknown role or bad signature refused; a role that is still online
 cannot be taken over from another address (409) until its heartbeat has expired (a stolen key cannot hijack a live
 node); per-source rate limit; the table is only shown to authenticated peers.
+With TLS=1 (multi/make_tls.sh) the registry speaks mutual TLS: only laptops holding a certificate from the private CA
+for the role target or peer can even connect; the HMAC checks below stay on top.
 Registering does NOT make a laptop a chain node. Trust is still decided by the contract (addNode / approved nodes).
 """
 import hashlib, hmac, ipaddress, json, os, re, sys, threading, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tlsutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -125,6 +129,17 @@ class Registry:
 
 class H(BaseHTTPRequestHandler):
     reg = None
+    allowed_cns = {"dualshield-target", "dualshield-peer"}      # with TLS=1 only these certificates may talk to the registry
+    tls_ok = True
+
+    def setup(self):
+        if tlsutil.enabled():
+            self.tls_ok = tlsutil.accept_handshake(self.request, self.allowed_cns) is not None
+        super().setup()
+
+    def handle(self):
+        if self.tls_ok:
+            super().handle()
 
     def log_message(self, *a):
         pass
@@ -176,8 +191,11 @@ def main():
         sys.exit("AGENT_SECRET_T / AGENT_SECRET_P missing (run multi/gen_secrets.sh)")
     H.reg = Registry(secrets, ttl=int(os.environ.get("REGISTRY_TTL", "120")), log=lambda m: print(m, flush=True))
     port = int(os.environ.get("REGISTRY_PORT", "8801"))
-    print("registry on :%d (peers file %s)" % (port, PEERS), flush=True)
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    srv = ThreadingHTTPServer(("0.0.0.0", port), H)
+    if tlsutil.enabled():
+        srv.socket = tlsutil.server_context().wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
+    print("registry on :%d%s (peers file %s)" % (port, " with mutual TLS" if tlsutil.enabled() else "", PEERS), flush=True)
+    srv.serve_forever()
 
 
 if __name__ == "__main__":

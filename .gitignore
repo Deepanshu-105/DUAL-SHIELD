@@ -13,3 +13,8 @@ blockchain/data/*.csv
 multi/config.env
 DUAL-SHIELD/
 ransomware/evidence/*.json
+
+# v6/v7: private keys and discovery state must never be committed
+multi/tls/
+multi/peers.json
+multi/peers.env

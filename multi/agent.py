@@ -14,11 +14,14 @@ Headers:  X-Ts (unix seconds), X-Nonce (random), X-Sig (hex).  Answer header: X-
   POST /recover               -> target only: verified recovery from the vault into data/sample_copy (in place)
   POST /unfreeze              -> target only: unfreeze the vault and restart the guard
   GET  /health                -> {"ok": true, "role": ...}
+With TLS=1 the agent speaks mutual TLS (private CA, certificate for the dashboard role required) in addition to the HMAC.
 Lab use only: do not expose this to a real network.
 """
 import hashlib, hmac, json, os, re, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tlsutil
 
 ROOT = os.environ.get("SHIELD_ROOT", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 ROLE = os.environ.get("ROLE", "target")
@@ -152,6 +155,17 @@ def sign(*parts):
 
 class H(BaseHTTPRequestHandler):
     nonce = ""
+    tls_ok = True
+
+    def setup(self):          # TLS=1: mutual TLS, and only the dashboard's certificate may call the agent
+        if tlsutil.enabled():
+            self.tls_ok = tlsutil.accept_handshake(self.request, {"dualshield-dashboard"}) is not None
+        super().setup()
+
+    def handle(self):
+        if self.tls_ok:
+            super().handle()
+
     def log_message(self, *a):
         pass
 
@@ -244,4 +258,8 @@ if __name__ == "__main__":
     if len(SECRET) < 16:
         sys.exit("AGENT_SECRET missing or shorter than 16 characters. Run multi/gen_secrets.sh and fill multi/config.env.")
     print("agent role=%s port=%d root=%s" % (ROLE, PORT, ROOT), flush=True)
-    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), H)
+    if tlsutil.enabled():
+        srv.socket = tlsutil.server_context().wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
+        print("mutual TLS on (certificates from %s)" % tlsutil.tls_dir(), flush=True)
+    srv.serve_forever()

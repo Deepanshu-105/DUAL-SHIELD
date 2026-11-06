@@ -34,8 +34,12 @@ guard() {   # guard PORT ip ip ... : accept those sources, drop everything else 
 }
 iptables -A $CH -i lo -j RETURN
 case "$ROLE" in
-  D) guard 8545 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1
-     guard 3000 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1 ;;
+  D) if [ "${TLS:-0}" = "1" ]; then
+       guard 8546 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1      # chain RPC tunnel; plain 8545 and 3000 are bound to 127.0.0.1 anyway
+     else
+       guard 8545 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1
+       guard 3000 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1
+     fi ;;
   T|P) guard 8800 "$D_IP" ;;
   A) ;;
   *) echo "usage: sudo multi/lockdown.sh D|T|P|A|off"; iptables -X $CH; exit 1 ;;
