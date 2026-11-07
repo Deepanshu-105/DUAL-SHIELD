@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 // v2: the whole dashboard (page and /api/*) needs the operator password (HTTP Basic, user "operator").
 // Set DASH_PASS before starting. For the old open lab mode set DASH_AUTH=off explicitly.
-// /localhost.json stays open: laptops T and P fetch the contract address and ABI from it (not secret).
+// (v9: no contract file any more; the chain is Hyperledger Fabric, read through /api/chain.)
 const same = (a, b) => {
   if (a.length !== b.length) return false;
   let d = 0;
@@ -28,5 +28,5 @@ export function proxy(request) {
 }
 
 export const config = {
-  matcher: ["/((?!localhost\\.json|_next/static|_next/image|favicon\\.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
 };

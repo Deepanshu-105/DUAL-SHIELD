@@ -1,0 +1,79 @@
+# Channel "cityshield": one orderer (Raft, a single consenter in the lab), two organisations.
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: crypto/ordererOrganizations/example.com/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Writers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Admins: { Type: Signature, Rule: "OR('OrdererMSP.admin')" }
+    OrdererEndpoints: ["127.0.0.1:7050"]
+  - &Org1
+    Name: Org1MSP
+    ID: Org1MSP
+    MSPDir: crypto/peerOrganizations/org1.example.com/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('Org1MSP.admin','Org1MSP.peer','Org1MSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('Org1MSP.admin','Org1MSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('Org1MSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('Org1MSP.peer')" }
+    AnchorPeers:                         # other organisations find this one through its anchor peer (cross-org gossip, gateway endorsement)
+      - { Host: 127.0.0.1, Port: 7051 }
+  - &Org2
+    Name: Org2MSP
+    ID: Org2MSP
+    MSPDir: crypto/peerOrganizations/org2.example.com/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('Org2MSP.admin','Org2MSP.peer','Org2MSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('Org2MSP.admin','Org2MSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('Org2MSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('Org2MSP.peer')" }
+    AnchorPeers:
+      - { Host: 127.0.0.1, Port: 9051 }
+Capabilities:
+  Channel: &ChannelCapabilities { V2_0: true }
+  Orderer: &OrdererCapabilities { V2_0: true }
+  Application: &ApplicationCapabilities { V2_5: true }
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    LifecycleEndorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+    Endorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+  Capabilities: *ApplicationCapabilities
+Orderer: &OrdererDefaults
+  Addresses: ["127.0.0.1:7050"]
+  BatchTimeout: 500ms
+  BatchSize: { MaxMessageCount: 20, AbsoluteMaxBytes: 99 MB, PreferredMaxBytes: 512 KB }
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    BlockValidation: { Type: ImplicitMeta, Rule: "ANY Writers" }
+  Capabilities: *OrdererCapabilities
+  OrdererType: etcdraft
+  EtcdRaft:
+    Consenters:
+      - Host: 127.0.0.1
+        Port: 7050
+        ClientTLSCert: crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+        ServerTLSCert: crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+Channel: &ChannelDefaults
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+  Capabilities: *ChannelCapabilities
+Profiles:
+  CityShieldChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations: [*OrdererOrg]
+    Application:
+      <<: *ApplicationDefaults
+      Organizations: [*Org1, *Org2]

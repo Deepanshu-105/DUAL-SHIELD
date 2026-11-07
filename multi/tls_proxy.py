@@ -2,12 +2,12 @@
 """TLS tunnel for services that do not speak TLS themselves (the chain's JSON-RPC, the dashboard). Stdlib only.
 
   # on D: terminate mutual TLS in front of the chain and the dashboard
-  tls_proxy.py server --listen 0.0.0.0:8546 --to 127.0.0.1:8545 --allow dualshield-target,dualshield-peer
+  tls_proxy.py server --listen 0.0.0.0:8546 --to 127.0.0.1:8545 --allow dualshield-target,dualshield-peer     # (generic example)
   tls_proxy.py server --listen 0.0.0.0:3443 --to 127.0.0.1:3000 --no-client-cert      # operators use a browser: password login over TLS
   # on T and P: a local door that carries plain RPC over mutual TLS to D
   tls_proxy.py client --listen 127.0.0.1:8545 --to D_IP:8546 --expect dualshield-dashboard
 
-So web3 code keeps using http://127.0.0.1:8545, but nothing readable crosses the network. The server side checks the
+So plain-HTTP clients can keep using a local port, but nothing readable crosses the network. The server side checks the
 caller's certificate (private CA, role name); the client side checks that D's certificate is ours and has the dashboard role.
 Note: the target service sees the proxy as its caller (127.0.0.1), so anything that relies on the caller's source address
 (the registry) must speak TLS itself instead of using this tunnel.

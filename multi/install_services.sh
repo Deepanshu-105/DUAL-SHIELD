@@ -17,7 +17,7 @@ ExecStart=$4
 Restart=always
 RestartSec=2
 EnvironmentFile=-$ROOT/multi/config.env
-Environment=PYTHONPATH=$ROOT/network DEPLOY=$ROOT/deployments/localhost.json
+Environment=PYTHONPATH=$ROOT/network
 
 [Install]
 WantedBy=multi-user.target

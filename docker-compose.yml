@@ -5,9 +5,14 @@ services:
       dockerfile: network/Dockerfile.target
     container_name: target
     cap_add: [NET_ADMIN]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      GATEWAY_URL: http://host.docker.internal:8600      # Hyperledger Fabric gateway on the host (fabric/gateway/server.js)
     volumes:
       - ./detector:/root/detector
-      - ./network/chain_report.py:/opt/shield/chain_report.py:ro
+      - ./network:/opt/shield:ro                          # chain_report.py, chainlib.py, ipcrypt.py
+      - ./multi:/opt/multi:ro                             # tlsutil.py (chainlib imports it)
     networks:
       lab:
         ipv4_address: 172.30.0.10
@@ -28,8 +33,12 @@ services:
       - NET_ADMIN
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      GATEWAY_URL: http://host.docker.internal:8600
+      PYTHONPATH: /opt/shield
     volumes:
-      - ./deployments/localhost.json:/opt/shield/localhost.json:ro
+      - ./network:/opt/shield:ro
+      - ./multi:/opt/multi:ro
     restart: unless-stopped
   attacker:
     image: kalilinux/kali-rolling

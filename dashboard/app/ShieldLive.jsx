@@ -1,9 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { JsonRpcProvider, Contract } from "ethers";
 
-const RPC = "http://127.0.0.1:8545";
-const NAMES = ["Node A (target)", "Node B (peer)", "Node C"];
+const NAMES = ["Node A (target, Org1)", "Node B (peer, Org2)", "Node C (Org1)"];
 const WARMUP = "203.0.113.1";   // start_lab.sh warm-up report: not a real attack
 const real = (l) => (l ? l.filter((i) => i !== WARMUP) : null);
 
@@ -30,45 +28,17 @@ export default function ShieldLive() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  useEffect(() => {
+  useEffect(() => {   // Hyperledger Fabric state, read by the dashboard server through the gateway (/api/chain)
     let alive = true;
-    let provider = null, contract = null, addrs = [];
-
-    async function init() {
-      const dep = await (await fetch("/localhost.json", { cache: "no-store" })).json();
-      provider = new JsonRpcProvider(RPC);
-      contract = new Contract(dep.address, dep.abi, provider);
-      const accounts = await provider.send("eth_accounts", []);
-      addrs = accounts.slice(1, 4); // accounts 1,2,3 are the registered nodes
-    }
-
     async function tick() {
       try {
-        if (!contract) await init();
-        const k = Number(await contract.K());
-        const n = Number(await contract.nodeCount());
-        const events = (await contract.queryFilter(contract.filters.ThreatReported(), 0)).filter((e) => e.args.ip !== WARMUP);
-        const ip = events.length ? events[events.length - 1].args.ip : null;
-        const [count, , confirmed] = ip
-          ? await contract.getTally(ip)
-          : [0n, BigInt(k), false];
-        const reporters = new Set(
-          events.filter((e) => e.args.ip === ip).map((e) => e.args.node.toLowerCase())
-        );
-        const nodes = await Promise.all(
-          addrs.map(async (a) => ({
-            addr: a,
-            stake: await contract.stakes(a),
-            reported: reporters.has(a.toLowerCase()),
-          }))
-        );
-        if (alive) setS({ status: "live", k, n, ip, count: Number(count), confirmed, nodes });
+        const r = await fetch("/api/chain", { cache: "no-store" });
+        const j = await r.json();
+        if (alive) setS(j);
       } catch (e) {
-        contract = null; // force a fresh init on the next tick
-        if (alive) setS({ status: "error: " + (e.shortMessage || e.message) });
+        if (alive) setS({ status: "error: " + e.message });
       }
     }
-
     tick();
     const id = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(id); };
@@ -224,8 +194,8 @@ export default function ShieldLive() {
           <div key={n.addr} style={{ background: colour(n), color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
             <strong>{NAMES[i]}</strong>
             <div>{label(n)}</div>
-            <div style={{ fontSize: 12 }}>{n.addr.slice(0, 10)}...</div>
-            <div style={{ fontSize: 12 }}>stake: {Number(n.stake) / 1e18} ETH</div>
+            <div style={{ fontSize: 12 }}>{n.addr.split("@")[0]}</div>
+            <div style={{ fontSize: 12 }}>stake: {Number(n.stake)} (no gas, no coin)</div>
           </div>
         ))}
       </div>

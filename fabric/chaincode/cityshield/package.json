@@ -1,0 +1,10 @@
+{
+  "name": "cityshield-chaincode",
+  "version": "1.0.0",
+  "description": "CityShield on Hyperledger Fabric: K-of-N threat consensus, stake and slashing, multi-signature governance, clean-state anchors",
+  "main": "index.js",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "mocha test --exit", "start": "fabric-chaincode-node server --chaincode-address=$CHAINCODE_SERVER_ADDRESS --chaincode-id=$CHAINCODE_ID" },
+  "dependencies": { "fabric-contract-api": "^2.5.8", "fabric-shim": "^2.5.8" },
+  "devDependencies": { "mocha": "^10.4.0" }
+}

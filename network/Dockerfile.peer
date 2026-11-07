@@ -1,12 +1,7 @@
 FROM ubuntu:22.04
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      python3 python3-pip ipset iptables iproute2 && \
-    pip3 install --no-cache-dir web3 websockets eth-abi && \
+      python3 ipset iptables iproute2 && \
     rm -rf /var/lib/apt/lists/*
-
-COPY network/listener.py /opt/shield/listener.py
-COPY network/entrypoint.sh /opt/shield/entrypoint.sh
-RUN chmod +x /opt/shield/entrypoint.sh
-
+# v9: listener.py, chainlib.py and entrypoint.sh are mounted from ./network at /opt/shield (docker-compose.yml)
 ENTRYPOINT ["/opt/shield/entrypoint.sh"]

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Nothing to compile: the chaincode runs as its own process. Copy connection.json through.
+SRC="$1"; META="$2"; OUT="$3"
+[ -f "$SRC/connection.json" ] || { echo "no connection.json in the package" >&2; exit 1; }
+cp "$SRC/connection.json" "$OUT/connection.json"

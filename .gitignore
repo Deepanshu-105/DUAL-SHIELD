@@ -18,3 +18,9 @@ ransomware/evidence/*.json
 multi/tls/
 multi/peers.json
 multi/peers.env
+
+# v9 Hyperledger Fabric: downloaded binaries and the generated network (keys!) are never committed
+fabric/bin/
+fabric/config/
+fabric/network/
+fabric/**/node_modules/

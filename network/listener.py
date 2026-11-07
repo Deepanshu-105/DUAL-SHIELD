@@ -1,23 +1,14 @@
-"""Peer listener: polls the chain over HTTP for ThreatConsensusReached and blocks the IP.
-Polling by block number (not a websocket subscription) so a dropped connection can never
-silently lose events: every block after the last one seen is queried."""
-import ipaddress, json, os, subprocess, sys, time
+"""Peer listener: polls the Fabric gateway for chaincode events (ThreatConsensusReached, ThreatOverruled) and blocks the IP.
+Polling by event id (not a push subscription) so a dropped connection can never silently lose events: every event after the
+last id seen is asked for again."""
+import ipaddress, os, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ipcrypt
-from eth_abi import decode
-from web3 import Web3
+from chainlib import Chain
 
-DEP = json.load(open(os.environ.get("DEPLOY", "/opt/shield/localhost.json")))
-HTTP = os.environ.get("CHAIN_HTTP", "http://host.docker.internal:8545")
-POLL = float(os.environ.get("POLL", "0.2"))
-LOG = "/var/log/peer_block.log"
-
-h = Web3.keccak(text="ThreatConsensusReached(string,bytes32,uint256)").hex()
-TOPIC = h if h.startswith("0x") else "0x" + h
-# v3: governance can overrule a confirmed block (collusion / false positive): then every peer lifts it.
-h2 = Web3.keccak(text="ThreatOverruled(string,uint256)").hex()
-TOPIC_OVERRULED = h2 if h2.startswith("0x") else "0x" + h2
+POLL = float(os.environ.get("POLL", "0.5"))
+LOG = os.environ.get("PEER_LOG", "/var/log/peer_block.log")
 
 
 def block(ip):
@@ -50,44 +41,40 @@ def unblock(ip):
 
 
 def run():
-    w3 = Web3(Web3.HTTPProvider(HTTP))
-    addr = Web3.to_checksum_address(DEP["address"])
+    chain = Chain()
     last = None
     while True:
         try:
-            head = w3.eth.block_number
-            if last is None or head < last:        # first start, or the chain was reset
+            if last is None:                       # first start: only events from now on
+                last = chain.head()
+                print("subscribed: polling from event %d" % last, flush=True)
+            evs, head = chain.events(last)
+            if head < last:                        # the gateway's history was reset
                 last = head
-                print("subscribed: polling from block %d" % head, flush=True)
-            elif head > last:
-                logs = w3.eth.get_logs({"address": addr, "topics": [[TOPIC, TOPIC_OVERRULED]],
-                                        "fromBlock": last + 1, "toBlock": head})
-                for lg in logs:
-                    t0 = lg["topics"][0].hex()
-                    if (t0 if t0.startswith("0x") else "0x" + t0) == TOPIC_OVERRULED:
-                        ip, n = decode(["string", "uint256"], bytes(lg["data"]))
-                        ip = ipcrypt.decode(ip)
-                        if ip is None:
-                            print("UNREADABLE_EVENT (encrypted threat, wrong or missing CHAIN_IP_KEY)", flush=True)
-                            continue
-                        print("OVERRULED ip=%s slashed=%d" % (ip, n), flush=True)
-                        unblock(ip)
-                        continue
-                    ip, ja3, count = decode(["string", "bytes32", "uint256"], bytes(lg["data"]))
-                    ip = ipcrypt.decode(ip)
-                    if ip is None:
-                        print("UNREADABLE_EVENT (encrypted threat, wrong or missing CHAIN_IP_KEY)", flush=True)
-                        continue
-                    print("EVENT ip=%s count=%d" % (ip, count), flush=True)
-                    if ip.startswith("sensor:"):
-                        sensor_event("QUARANTINE", ip[7:])
-                        continue
-                    block(ip)
-                last = head
+                continue
+            for ev in evs:
+                last = max(last, ev["id"])
+                name = ev.get("name")
+                if name not in ("ThreatConsensusReached", "ThreatOverruled"):
+                    continue
+                ip = ipcrypt.decode(ev.get("ip", ""))
+                if ip is None:
+                    print("UNREADABLE_EVENT (encrypted threat, wrong or missing CHAIN_IP_KEY)", flush=True)
+                    continue
+                if name == "ThreatOverruled":
+                    print("OVERRULED ip=%s slashed=%d" % (ip, ev.get("slashedNodes", 0)), flush=True)
+                    unblock(ip)
+                    continue
+                print("EVENT ip=%s count=%d" % (ip, ev.get("count", 0)), flush=True)
+                if ip.startswith("sensor:"):
+                    sensor_event("QUARANTINE", ip[7:])
+                    continue
+                block(ip)
             time.sleep(POLL)
         except Exception as e:
             print("listener error:", e, "- retrying in 2 s", flush=True)
             time.sleep(2)
 
 
-run()
+if __name__ == "__main__":
+    run()

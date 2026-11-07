@@ -1,7 +1,7 @@
 #!/bin/bash
 # v2: only the known laptops may reach the sensitive ports. Run with sudo on each laptop, after its start script
 # (or before; the rules do not depend on the services running).
-#   sudo multi/lockdown.sh D      chain 8545 and dashboard file 3000: only T and P (and D itself)
+#   sudo multi/lockdown.sh D      Fabric gateway (8600) and dashboard 3000: only T and P (and D itself)
 #   sudo multi/lockdown.sh T      agent 8800: only D          (SSH 22 stays open: that is what is defended)
 #   sudo multi/lockdown.sh P      agent 8800: only D
 #   sudo multi/lockdown.sh off    remove the rules
@@ -34,12 +34,8 @@ guard() {   # guard PORT ip ip ... : accept those sources, drop everything else 
 }
 iptables -A $CH -i lo -j RETURN
 case "$ROLE" in
-  D) if [ "${TLS:-0}" = "1" ]; then
-       guard 8546 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1      # chain RPC tunnel; plain 8545 and 3000 are bound to 127.0.0.1 anyway
-     else
-       guard 8545 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1
-       guard 3000 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1
-     fi ;;
+  D) guard "${GATEWAY_PORT:-8600}" "$T_IP" "$P_IP" "$D_IP" 127.0.0.1    # Fabric gateway; orderer and peers listen on 127.0.0.1 only
+     [ "${TLS:-0}" = "1" ] || guard 3000 "$T_IP" "$P_IP" "$D_IP" 127.0.0.1 ;;
   T|P) guard 8800 "$D_IP" ;;
   A) ;;
   *) echo "usage: sudo multi/lockdown.sh D|T|P|A|off"; iptables -X $CH; exit 1 ;;

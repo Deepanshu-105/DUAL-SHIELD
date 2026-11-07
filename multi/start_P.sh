@@ -12,13 +12,13 @@ iptables -C INPUT -m set --match-set city_blacklist src -j DROP 2>/dev/null || \
   iptables -I INPUT -m set --match-set city_blacklist src -j DROP
 : > /var/log/peer_block.log
 
-tls_chain_door
-fetch_deploy || { echo "FAIL: cannot fetch the contract from http://$D_IP:3000 (is start_D.sh running?)"; exit 1; }
+wait_gateway || { echo "FAIL: cannot reach the Fabric gateway at $D_IP:$GATEWAY_PORT (is start_D.sh running? TLS settings and certificates the same?)"; exit 1; }
+PYTHONPATH="$ROOT/network" "$PY" "$ROOT/network/chain_setup.py" --register 2 || { echo "FAIL: node registration on Fabric"; exit 1; }
 AGENT_SECRET="$AGENT_SECRET_P" ROLE=peer SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
 if [ "${BLOCK_TTL:-0}" -gt 0 ] 2>/dev/null; then
   nohup "$PY" -u "$ROOT/detector/expire_blocks.py" --ttl "$BLOCK_TTL" > /var/log/expire.out 2>&1 &
   echo "block expiry on: $BLOCK_TTL s"
 fi
-echo "P READY: agent on :8800, listening to the chain at $CHAIN_HTTP. Peer log below (Ctrl+C stops it)."
+echo "P READY: agent on :8800, listening to Fabric through the gateway at $D_IP:$GATEWAY_PORT. Peer log below (Ctrl+C stops it)."
 echo "-----"
-exec env CHAIN_HTTP="$CHAIN_HTTP" DEPLOY="$ROOT/deployments/localhost.json" "$PY" -u "$ROOT/network/listener.py"
+exec env PYTHONPATH="$ROOT/network" "$PY" -u "$ROOT/network/listener.py"

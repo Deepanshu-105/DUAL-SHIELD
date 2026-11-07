@@ -2,5 +2,5 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssh-server rsyslog ipset iptables python3 python3-pip procps ca-certificates \
-    && pip3 install --no-cache-dir web3 \
     && rm -rf /var/lib/apt/lists/*
+# v9: no web3. The chain client (network/chainlib.py) is standard-library Python and is mounted from the repo.

@@ -1,25 +1,24 @@
-import json, os, sys, time
-from web3 import Web3
+"""anchor_snapshot.py IP ROOT_HEX : record the clean-state Merkle root for IP on the Fabric ledger (anchorCleanState).
+The anchoring identity (who=1, the target node) must be approved and staked; this script does that first if needed."""
+import os, sys, time
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEP = json.load(open(f"{HERE}/../deployments/localhost.json"))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "network"))
+from chainlib import Chain, ChainError, IDENTITY_NAMES
 
-w3 = Web3(Web3.HTTPProvider(os.environ.get("CHAIN_HTTP", "http://127.0.0.1:8545")))
-contract = w3.eth.contract(address=DEP["address"], abi=DEP["abi"])
-
+c = Chain()
 ip = sys.argv[1] if len(sys.argv) > 1 else "172.30.0.12"
-root_hex = sys.argv[2]  # the real root from snapshot_latest.json, e.g. 89105032...
-root_bytes32 = bytes.fromhex(root_hex)
-t_attack = int(time.time())
+root_hex = sys.argv[2]                      # the real root from snapshot_latest.json
+who = int(os.environ.get("ANCHOR_AS", "1"))
 
-account = w3.eth.accounts[0]  # must already be registered via registerNode()
-
-tx = contract.functions.anchorCleanState(ip, root_bytes32, t_attack).transact({"from": account})
-receipt = w3.eth.wait_for_transaction_receipt(tx)
-print("tx hash:", receipt.transactionHash.hex())
-print("gas used:", receipt.gasUsed)
-
-root, t, anchored = contract.functions.getCleanState(ip).call()
-print("on-chain root:", root.hex())
-print("matches snapshot root:", root.hex() == root_hex)
-print("tAttack:", t, "anchored:", anchored)
+if c.query(0, "nodeInfo", IDENTITY_NAMES[who])["stake"] == 0:
+    try:
+        c.submit(0, "addNode", IDENTITY_NAMES[who])
+    except ChainError:
+        pass
+    c.register_node(who)
+c.anchor_clean_state(ip, root_hex, int(time.time()), who=who)
+st = c.clean_state(ip)
+print("on-chain root:", st["merkleRoot"])
+print("matches snapshot root:", st["merkleRoot"] == root_hex.lower())
+print("tAttack:", st["tAttack"], "anchored:", st["anchored"])
