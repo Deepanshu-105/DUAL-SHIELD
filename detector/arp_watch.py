@@ -17,9 +17,11 @@ Limits: only sees ARP on the local network segment; a spoofer that keeps the rea
 import argparse, collections, os, re, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 from flood_detector import Reactor
 
-ARP_LOG = "/var/log/arp_alert.log"
+ARP_LOG = shield_os.log_path("arp_alert.log")
 NEIGH = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+dev\s+(\S+)\s+lladdr\s+([0-9a-f:]{17})\s+(\S+)", re.I)
 
 
@@ -113,4 +115,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if shield_os.IS_WIN:
+        sys.exit("arp_watch.py reads `ip neigh` (Linux). Not available on Windows yet.")
     main()

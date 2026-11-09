@@ -44,7 +44,7 @@ def snapshot(folder):
     for root, _, names in os.walk(folder):
         for n in sorted(names):
             p = os.path.join(root, n)
-            rel = os.path.relpath(p, folder)
+            rel = os.path.relpath(p, folder).replace(os.sep, "/")
             with open(p, "rb") as f:
                 head = f.read(4096)
             files[rel] = {"sha256": sha256(p), "header": head[:16].hex(), "chi2": round(chi_square(head), 1)}

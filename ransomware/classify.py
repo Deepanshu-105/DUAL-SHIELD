@@ -12,7 +12,7 @@ A named family (WannaCry, LockBit, ...) is only a HINT from file and note names 
 rename them, so never rely on it. Not seen by this module: boot-record / whole-disk damage, screen lockers that touch no
 file, and mobile ransomware.
 """
-import os, re, time
+import os, re, sys, time
 
 ARCHIVE_EXT = (".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".zst")
 NOTE_NAME = re.compile(r"(read[_\- ]?me|decrypt|restore|recover|how[_\- ]?to|ransom|instruction|help[_\- ]?(me|files)|@please|_readme|-readme|your[_\- ]files)", re.I)
@@ -238,14 +238,7 @@ class ExfilWatch:
 
 
 def tx_total():
-    """Bytes sent on all non-loopback interfaces (Linux). None if unreadable."""
-    try:
-        tot = 0
-        for line in open("/proc/net/dev").read().splitlines()[2:]:
-            name, rest = line.split(":", 1)
-            if name.strip() == "lo":
-                continue
-            tot += int(rest.split()[8])
-        return tot
-    except (OSError, ValueError, IndexError):
-        return None
+    """Bytes sent on all non-loopback interfaces (Linux /proc/net/dev, or psutil on Windows). None if unreadable."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+    import shield_os
+    return shield_os.tx_bytes()

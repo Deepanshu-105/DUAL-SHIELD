@@ -52,6 +52,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="dsguard_")
     work = os.path.join(tmp, "ransomware")
     shutil.copytree(HERE, work, ignore=shutil.ignore_patterns("data", "baseline.json", "__pycache__", "evidence"))
+    os.makedirs(os.path.join(tmp, "multi"), exist_ok=True); shutil.copy(os.path.join(os.path.join(HERE, ".."), "multi", "shield_os.py"), os.path.join(tmp, "multi"))   # v10: the OS layer sits next to ransomware/
     os.chdir(work)
     make_sample()
     # step 7: two roots, one extra root with excluded and oversized files

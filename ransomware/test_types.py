@@ -12,6 +12,7 @@ def check(name, cond, extra=""):
 tmp = tempfile.mkdtemp(prefix="dstypes_")
 work = os.path.join(tmp, "ransomware")
 shutil.copytree(HERE, work, ignore=shutil.ignore_patterns("data", "baseline.json", "__pycache__", "evidence"))
+os.makedirs(os.path.join(tmp, "multi"), exist_ok=True); shutil.copy(os.path.join(os.path.join(HERE, ".."), "multi", "shield_os.py"), os.path.join(tmp, "multi"))   # v10: the OS layer sits next to ransomware/
 os.chdir(work); sys.path.insert(0, work)
 import classify, detect, vault, containment, guard as G
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes

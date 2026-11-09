@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tlsutil
+import shield_os            # v10: Linux or Windows firewall / paths
 
 ROOT = os.environ.get("SHIELD_ROOT", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 ROLE = os.environ.get("ROLE", "target")
@@ -33,13 +34,13 @@ PORT = int(os.environ.get("AGENT_PORT", "8800"))
 PY = os.environ.get("SHIELD_PY", sys.executable)
 RDIR = os.path.join(ROOT, "ransomware")
 LOGS = {
-    "parser_block": "/var/log/parser_block.log",
-    "peer_block": "/var/log/peer_block.log",
-    "metrics": "/var/log/metrics.log",
-    "flood": "/var/log/flood_block.log",
-    "login": "/var/log/login_block.log",
-    "arp": "/var/log/arp_alert.log",
-    "sensor": "/var/log/sensor_alert.log",
+    "parser_block": shield_os.log_path("parser_block.log"),
+    "peer_block": shield_os.log_path("peer_block.log"),
+    "metrics": shield_os.log_path("metrics.log"),
+    "flood": shield_os.log_path("flood_block.log"),
+    "login": shield_os.log_path("login_block.log"),
+    "arp": shield_os.log_path("arp_alert.log"),
+    "sensor": shield_os.log_path("sensor_alert.log"),
     "watch": os.path.join(RDIR, "evidence", "watch.log"),
 }
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -57,13 +58,11 @@ def tail(path, n):
 
 
 def ipset_members():
+    """Blocked addresses on this laptop (Linux ipset, Windows firewall rules). None if the mechanism is not available."""
     try:
-        out = subprocess.run(["ipset", "list", "city_blacklist"], capture_output=True, text=True)
-    except OSError:
+        return [i for i in shield_os.block_list() if re.match(r"^\d+\.\d+\.\d+\.\d+", i)]
+    except (OSError, shield_os.BlockError):
         return None
-    if out.returncode != 0:
-        return None
-    return [l.split()[0] for l in out.stdout.splitlines() if re.match(r"^\d+\.\d+\.\d+\.\d+", l)]
 
 
 def run_rollback(ip):
@@ -122,9 +121,15 @@ def start_guard(fresh=False):
     global guard
     stop_guard()
     if fresh:
-        subprocess.run("rm -rf data/vault data/vault.frozen data/vault.push.json evidence/containment.json "
-                       "evidence/recovery_report.json evidence/guard.json", shell=True, cwd=RDIR)
-        subprocess.run("rm -rf data/sample_copy && cp -r data/sample data/sample_copy", shell=True, cwd=RDIR)
+        import shutil                      # no shell: works the same on Windows
+        for p in ("data/vault", "data/vault.frozen", "data/vault.push.json", "evidence/containment.json",
+                  "evidence/recovery_report.json", "evidence/guard.json", "data/sample_copy"):
+            full = os.path.join(RDIR, p)
+            if os.path.isdir(full):
+                shutil.rmtree(full, ignore_errors=True)
+            elif os.path.exists(full):
+                os.remove(full)
+        shutil.copytree(os.path.join(RDIR, "data", "sample"), os.path.join(RDIR, "data", "sample_copy"))
     wl = open(os.path.join(RDIR, "evidence", "watch.log"), "a")
     guard = subprocess.Popen([PY, "-u", "guard.py", "protect.json"], cwd=RDIR, stdout=wl, stderr=subprocess.STDOUT)
     for _ in range(100):

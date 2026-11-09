@@ -101,6 +101,7 @@ check("flagged sensor is quarantined locally", "s3" in g.quarantined)
 tmp = tempfile.mkdtemp(prefix="dscan_")
 work = os.path.join(tmp, "ransomware")
 shutil.copytree(os.path.join(ROOT, "ransomware"), work, ignore=shutil.ignore_patterns("data", "evidence", "__pycache__", "baseline.json"))
+os.makedirs(os.path.join(tmp, "multi"), exist_ok=True); shutil.copy(os.path.join(ROOT, "multi", "shield_os.py"), os.path.join(tmp, "multi"))   # v10: the OS layer sits next to ransomware/
 os.chdir(work)
 os.makedirs("data/docs")
 for i in range(6):

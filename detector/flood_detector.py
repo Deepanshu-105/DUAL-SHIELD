@@ -22,10 +22,12 @@ fails against spoofed sources. This layer handles small and medium floods and sh
 import argparse, collections, os, socket, struct, subprocess, sys, threading, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 from netset import NetSet, from_env
 
 IPSET_NAME = "city_blacklist"
-FLOOD_LOG = "/var/log/flood_block.log"
+FLOOD_LOG = shield_os.log_path("flood_block.log")
 DEFAULT_WL = {"172.30.0.1", "172.30.0.11"}
 
 
@@ -161,9 +163,10 @@ class Reactor:
             return
         self.blocked.add(ip)
         if not self.dry:
-            r = subprocess.run(["ipset", "add", IPSET_NAME, ip, "-exist"], capture_output=True, text=True)
-            if r.returncode != 0:
-                print("[ERROR] ipset add failed:", r.stderr.strip(), flush=True)
+            try:
+                shield_os.block_add(ip)
+            except shield_os.BlockError as e:
+                print("[ERROR] block failed:", e.stderr, flush=True)
         line = "%s ip=%s ts=%.3f kind=%s" % (self.prefix, ip, time.time(), kind)
         print(line, flush=True)
         if not self.dry:
@@ -229,4 +232,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if shield_os.IS_WIN:
+        sys.exit("flood_detector.py needs a raw packet socket (Linux). On Windows it is not available yet; the Windows target relies on the failed-logon watcher and the Windows Firewall.")
     main()

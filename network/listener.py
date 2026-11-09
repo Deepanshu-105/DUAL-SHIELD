@@ -4,16 +4,18 @@ last id seen is asked for again."""
 import ipaddress, os, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 import ipcrypt
 from chainlib import Chain
 
 POLL = float(os.environ.get("POLL", "0.5"))
-LOG = os.environ.get("PEER_LOG", "/var/log/peer_block.log")
+LOG = os.environ.get("PEER_LOG") or shield_os.log_path("peer_block.log")
 
 
 def block(ip):
     ipaddress.ip_address(ip)
-    subprocess.run(["ipset", "add", "city_blacklist", ip, "-exist"], check=True)
+    shield_os.block_add(ip)
     line = "PEER_BLOCK ip=%s ts=%.3f" % (ip, time.time())
     print(line, flush=True)
     with open(LOG, "a") as f:
@@ -33,7 +35,7 @@ def unblock(ip):
     if ip.startswith("sensor:"):
         return sensor_event("RELEASE", ip[7:])
     ipaddress.ip_address(ip)
-    subprocess.run(["ipset", "del", "city_blacklist", ip, "-exist"], check=True)
+    shield_os.block_del(ip)
     line = "PEER_UNBLOCK ip=%s ts=%.3f reason=overruled" % (ip, time.time())
     print(line, flush=True)
     with open(LOG, "a") as f:

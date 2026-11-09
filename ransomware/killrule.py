@@ -8,68 +8,28 @@ Finding the process that wrote the file
 watchdog events carry no PID. We look for the writer in /proc:
   1. any process holding a file open under the watched folder (checked at
      every flag, so a process seen at flag 1 or 2 is still known at flag 3);
-  2. LAB FALLBACK: a process whose command line contains one of
+  2. (v10) the processes whose write volume grew most since the previous flag (psutil; this is what Windows relies on, because
+     ransomware there often opens, writes and closes files too fast to be seen holding one);
+  3. LAB FALLBACK: a process whose command line contains one of
      FALLBACK_CMDLINE (the simulator). This only exists so the demo cannot
      silently fail; it is not a real attribution method.
 A production tool would use fanotify, which reports the PID with each event.
 """
 import collections
 import os
-import signal
+import sys
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # Linux (/proc, SIGKILL) and Windows (psutil, TerminateProcess)
 
 THRESHOLD = 3          # distinct flagged files ...
 WINDOW_S = 2.0         # ... inside this many seconds
 FALLBACK_CMDLINE = ("mock_crypto",)
 
-
-def _ancestors():
-    """PIDs we must never kill: init, ourselves, and our parent chain."""
-    safe, pid = {0, 1, os.getpid()}, os.getpid()
-    while pid > 1:
-        try:
-            with open("/proc/%d/stat" % pid) as f:
-                pid = int(f.read().rsplit(")", 1)[1].split()[1])
-        except (OSError, ValueError, IndexError):
-            break
-        safe.add(pid)
-    return safe
-
-
-def pids_with_open_file_under(folder):
-    """PIDs that currently have a file open inside `folder`."""
-    folder = os.path.realpath(folder) + os.sep
-    found = set()
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit():
-            continue
-        fd_dir = "/proc/%s/fd" % entry.name
-        try:
-            for fd in os.listdir(fd_dir):
-                try:
-                    if os.readlink(os.path.join(fd_dir, fd)).startswith(folder):
-                        found.add(int(entry.name))
-                        break
-                except OSError:
-                    continue
-        except OSError:          # process gone, or not ours
-            continue
-    return found
-
-
-def pids_by_cmdline(needles):
-    found = set()
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit():
-            continue
-        try:
-            with open("/proc/%s/cmdline" % entry.name, "rb") as f:
-                cmd = f.read().replace(b"\0", b" ").decode(errors="replace")
-        except OSError:
-            continue
-        if any(n in cmd for n in needles):
-            found.add(int(entry.name))
-    return found
+_ancestors = shield_os.ancestors
+pids_with_open_file_under = shield_os.pids_with_open_file_under
+pids_by_cmdline = shield_os.pids_by_cmdline
 
 
 class KillRule:
@@ -80,6 +40,8 @@ class KillRule:
         self.suspects = set()                     # writers seen at earlier flags
         self.cooldown_until = 0.0
         self.safe = _ancestors()
+        self.writers = shield_os.WriterTracker()   # who writes most right now (used when no open file is seen)
+        self.heavy = []
 
     def on_flag(self, rel, force=False):
         """Call once per FLAGGED line. Returns the list of killed PIDs (usually []).
@@ -96,6 +58,7 @@ class KillRule:
 
         # remember who has the folder open right now (cheap, one /proc pass)
         self.suspects |= pids_with_open_file_under(self.watch_dir) - self.safe
+        self.heavy = [p for p in dict.fromkeys(self.heavy + self.writers.sample()) if p not in self.safe][-6:]
 
         if len(self.recent) < self.threshold and not force:   # force: a decoy file was touched
             return []
@@ -104,6 +67,8 @@ class KillRule:
         print("%.6f KILL_TRIGGER distinct_files=%d" % (t_trigger, len(self.recent)), flush=True)
         targets, how = self.suspects & self._alive(self.suspects), "open-file"
         if not targets:
+            targets, how = {p for p in self.heavy if self._alive([p])}, "top-writer"
+        if not targets:
             targets, how = pids_by_cmdline(FALLBACK_CMDLINE) - self.safe, "cmdline-fallback"
         killed = []
         for pid in sorted(targets):
@@ -111,7 +76,7 @@ class KillRule:
                 print("%.6f DRY_RUN would kill pid=%d (%s)" % (time.time(), pid, how), flush=True)
                 continue
             try:
-                os.kill(pid, signal.SIGKILL)          # os.kill(pid, 9)
+                shield_os.kill_pid(pid)               # Linux SIGKILL / Windows TerminateProcess of the tree
                 killed.append(pid)
                 print("%.6f KILLED pid=%d (%s)" % (time.time(), pid, how), flush=True)
             except ProcessLookupError:
@@ -122,9 +87,10 @@ class KillRule:
             print("%.6f KILL_NO_TARGET" % time.time(), flush=True)
         self.recent.clear()
         self.suspects.clear()
+        self.heavy = []
         self.cooldown_until = now + self.window       # ignore the dead process's queued events
         return killed
 
     @staticmethod
     def _alive(pids):
-        return {p for p in pids if os.path.exists("/proc/%d" % p)}
+        return {p for p in pids if shield_os.pid_alive(p)}

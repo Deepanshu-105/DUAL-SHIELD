@@ -21,11 +21,13 @@ Limits: a login with a stolen password from an allowed IP at a normal hour looks
 import argparse, collections, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 from flood_detector import Reactor
 from netset import NetSet, from_env
 
-LOG_PATH = os.environ.get("LOG_PATH", "/var/log/auth.log")
-LOGIN_LOG = "/var/log/login_block.log"
+LOG_PATH = os.environ.get("LOG_PATH") or shield_os.log_path("auth.log")
+LOGIN_LOG = shield_os.log_path("login_block.log")
 IP = r"(\d{1,3}(?:\.\d{1,3}){3})"
 FAIL = re.compile(r"Failed \S+ for (?:invalid user )?(\S+) from " + IP)
 INVALID = re.compile(r"Invalid user (\S+) from " + IP)

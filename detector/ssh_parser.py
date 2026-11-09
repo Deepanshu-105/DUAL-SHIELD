@@ -21,15 +21,17 @@ import hassh
 import sys
 
 sys.path.insert(0, "/opt/shield")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 try:
     import chain_report  # M1: reports blocks to the CityShield contract
 except Exception as e:
     chain_report = None
     print(f"[WARN] chain reporting is off: {e}", flush=True)
 
-LOG_PATH = os.environ.get("LOG_PATH", "/var/log/auth.log")
+LOG_PATH = os.environ.get("LOG_PATH") or shield_os.log_path("auth.log")   # Windows: written by win_logon_watch.py
 IPSET_NAME = "city_blacklist"
-PARSER_LOG = os.environ.get("PARSER_LOG", "/var/log/parser_block.log")
+PARSER_LOG = os.environ.get("PARSER_LOG") or shield_os.log_path("parser_block.log")
 THRESHOLD = 3   # failures ...
 WINDOW = 5      # ... inside this many seconds
 
@@ -65,19 +67,16 @@ fingerprints = {}  # ip -> latest HASSH seen from that ip
 # ---------------------------------------------------------------- firewall
 def ensure_firewall():
     """Create the ipset and iptables rule if missing (both are lost on container restart)."""
-    subprocess.run(["ipset", "create", IPSET_NAME, "hash:ip", "-exist"], check=True)
-    rule = ["INPUT", "-m", "set", "--match-set", IPSET_NAME, "src", "-j", "DROP"]
-    exists = subprocess.run(["iptables", "-C", *rule], capture_output=True).returncode == 0
-    if not exists:
-        subprocess.run(["iptables", "-I", *rule], check=True)
+    shield_os.block_init()
 
 
-TOR_FILES = [os.environ.get("TOR_LIST", "/root/detector/tor_exit_nodes.txt"),
-             os.environ.get("TOR_LIST_EXTRA", "/root/detector/tor_lab_test.txt")]
+_HERE = os.path.dirname(os.path.abspath(__file__))
+TOR_FILES = [os.environ.get("TOR_LIST", os.path.join(_HERE, "tor_exit_nodes.txt")),
+             os.environ.get("TOR_LIST_EXTRA", os.path.join(_HERE, "tor_lab_test.txt"))]
 # HASSH value your own lab captured from Hydra. Not a public list.
 BAD_HASSH = set(filter(None, os.environ.get(
     "BAD_HASSH", "015322ee8471fa8338c558a918183b11").split(",")))
-METRICS = os.environ.get("METRICS_LOG", "/var/log/metrics.log")
+METRICS = os.environ.get("METRICS_LOG") or shield_os.log_path("metrics.log")
 tor_ips = set()
 
 
@@ -127,8 +126,7 @@ def block_ip(ip, t_detect=None):
     if ip in WHITELIST or ip in blocked_ips:
         return
     try:
-        subprocess.run(["ipset", "add", IPSET_NAME, ip, "-exist"],
-                       check=True, capture_output=True, text=True)
+        shield_os.block_add(ip)
         blocked_ips.add(ip)
         if t_detect is not None:
             metric("drop_ms", (time.perf_counter() - t_detect) * 1000)
@@ -145,7 +143,7 @@ def block_ip(ip, t_detect=None):
         with open(PARSER_LOG, "a") as f:
             f.write(line + "\n")
         report_async(ip)
-    except subprocess.CalledProcessError as e:
+    except shield_os.BlockError as e:
         print(f"[ERROR] could not add {ip}: {e.stderr.strip()}", flush=True)
 
 
@@ -188,7 +186,7 @@ def start_sniffer():
     def run():
         try:
             hassh.sniff(on_hassh)
-        except OSError as e:  # includes PermissionError
+        except (OSError, AttributeError) as e:  # PermissionError; no raw packet socket on Windows
             print(f"[WARN] HASSH sniffer is off: {e}", flush=True)
 
     threading.Thread(target=run, daemon=True).start()
