@@ -326,7 +326,10 @@ class WriterTracker:
             if _protected_name(p.info.get("name")):
                 continue
             try:
-                cur[p.info["pid"]] = p.io_counters().write_bytes
+                io = p.io_counters()
+                # Linux: write_bytes only grows when the kernel flushes to disk (late, and not at all on some WSL/tmpfs paths);
+                # write_chars counts the write() calls themselves, so use whichever is larger. Windows has write_bytes only.
+                cur[p.info["pid"]] = max(io.write_bytes, getattr(io, "write_chars", 0))
             except Exception:
                 continue
         now = time.time()
