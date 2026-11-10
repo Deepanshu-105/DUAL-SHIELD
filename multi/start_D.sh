@@ -26,7 +26,7 @@ cd "$ROOT"
 echo
 echo "Chain:     Hyperledger Fabric channel cityshield (no gas). Gateway on :$GATEWAY_PORT ($([ "${TLS:-0}" = "1" ] && echo "mutual TLS" || echo "plain HTTP"), lab identities: GATEWAY_LAB=${GATEWAY_LAB:-1})"
 echo "           run sudo multi/lockdown.sh D so only T and P can reach the gateway"
-echo "Dashboard: http://localhost:3000   login: operator / DASH_PASS"
+echo "Dashboard: http://localhost:3000   sign in with DASH_PASS (administrator) or DASH_VIEW_PASS (read-only viewer)"
 echo "Now start T and P (sudo multi/start_T.sh, sudo multi/start_P.sh). Dashboard starting ..."
 if [ "${TLS:-0}" = "1" ]; then
   pkill -f tls_proxy.py 2>/dev/null
@@ -41,4 +41,8 @@ fi
 SCHEME=http; [ "${TLS:-0}" = "1" ] && SCHEME=https
 cd "$ROOT/dashboard"
 GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:8800" PEER_AGENT="$SCHEME://$P_IP:8800" ATTACKER_IP="$A_IP" \
-  exec npm run dev -- -H "$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
+  bash -c 'HOST="$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
+    if [ "${DASH_DEV:-0}" = "1" ]; then exec npm run dev -- -H "$HOST"; fi
+    # production build: no development server, no source maps in the browser, live data never cached
+    npm run build >"'"$LOGD"'/dashboard_build.out" 2>&1 || { echo "dashboard build failed, see '"$LOGD"'/dashboard_build.out"; exit 1; }
+    exec npm run start -- -H "$HOST" -p 3000' 

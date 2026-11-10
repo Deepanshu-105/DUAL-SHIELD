@@ -2,6 +2,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { MULTI, agent } from "../../../lib/agent.js";
+import { needAdmin, audit } from "../../../lib/security.js";
 
 // Recovery panel data (Layer 2 recovery): vault, guard, containment, last recovery.
 //   GET  /api/recovery                         -> summary (four-laptop mode: asked from laptop T's agent)
@@ -31,6 +32,7 @@ export async function POST(req) {
     return Response.json({ ok: false, output: "unknown action" }, { status: 400 });
   }
   const t0 = Date.now();
+  audit("RECOVERY_" + action.toUpperCase(), w.name, w.ip, "requested");
   try {
     if (MULTI) {
       const ip = process.env.ATTACKER_IP || "";

@@ -1,6 +1,6 @@
 #!/bin/bash
 # A complete Hyperledger Fabric network on ONE machine (laptop D) without Docker:
-#   1 orderer (Raft), 2 peers (Org1 = target side, Org2 = peer side), channel "cityshield", chaincode "cityshield"
+#   1 or 3 orderers (Raft, ORDERERS=3), 2 peers (Org1 = target side, Org2 = peer side), channel "cityshield", chaincode "cityshield"
 #   (chaincode-as-a-service, a Node process). Everything listens on 127.0.0.1; only the gateway (fabric/gateway) is exposed to the other laptops, over mutual TLS.
 #
 #   fabric/deploy/network.sh up        create crypto, start everything, create the channel, deploy + initialise the chaincode
@@ -12,9 +12,23 @@ set -u
 FAB="$(cd "$(dirname "$0")/.." && pwd)"; DEP="$FAB/deploy"
 BIN="${FABRIC_BIN:-$FAB/bin}"; NET="${NET_DIR:-$FAB/network}"
 CC_DIR="$FAB/chaincode/cityshield"; CH=cityshield; CC=cityshield; CC_LABEL=cityshield_1; CC_PORT="${CC_PORT:-9999}"
+ORDERERS="${ORDERERS:-1}"     # v11: 1 (default) or 3 Raft orderers (survives the loss of one); change only on a fresh network (reset first)
 export PATH="$BIN:$PATH" FABRIC_CFG_PATH="$NET/cfg"
 C="$NET/crypto"; OR="$C/ordererOrganizations/example.com"; O1="$C/peerOrganizations/org1.example.com"; O2="$C/peerOrganizations/org2.example.com"
 ORDERER_CA="$OR/orderers/orderer.example.com/tls/ca.crt"
+
+ord_name() { [ "$1" = 1 ] && echo orderer || echo "orderer$1"; }          # pid/log name
+ord_host() { [ "$1" = 1 ] && echo orderer.example.com || echo "orderer$1.example.com"; }
+ord_port() { echo $((7050 + ($1 - 1) * 10)); }
+ord_admin() { echo $((7053 + ($1 - 1) * 10)); }
+
+live_orderer() {   # echo "port host" of the first orderer that accepts connections (failover when one is down)
+  local i
+  for i in $(seq 1 "$ORDERERS"); do
+    (exec 3<>/dev/tcp/127.0.0.1/$(ord_port $i)) 2>/dev/null && { echo "$(ord_port $i) $(ord_host $i)"; return; }
+  done
+  echo "7050 orderer.example.com"
+}
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 need() { [ -x "$BIN/$1" ] || die "$BIN/$1 missing: run fabric/deploy/install_fabric.sh"; }
@@ -36,6 +50,21 @@ gen_crypto() {
   cp "$DEP/configtx.yaml" "$NET/configtx.yaml"
   cp "$FAB/config/core.yaml" "$FAB/config/orderer.yaml" "$NET/cfg/"
   cp "$DEP/configtx.yaml" "$NET/cfg/"
+  if [ "$ORDERERS" != 1 ] && [ ! -f "$NET/genesis.block" ]; then      # several orderers: rewrite endpoints and Raft consenters
+    python3 - "$NET/configtx.yaml" "$NET/cfg/configtx.yaml" "$ORDERERS" <<'PY'
+import re, sys
+n = int(sys.argv[3])
+ports = [7050 + 10 * i for i in range(n)]
+hosts = ["orderer.example.com"] + ["orderer%d.example.com" % (i + 1) for i in range(1, n)]
+for p in sys.argv[1:3]:
+    t = open(p).read()
+    t = re.sub(r'OrdererEndpoints: \[[^\]]*\]', 'OrdererEndpoints: [%s]' % ", ".join('"127.0.0.1:%d"' % x for x in ports), t)
+    t = re.sub(r'Addresses: \["127.0.0.1:7050"\]', 'Addresses: [%s]' % ", ".join('"127.0.0.1:%d"' % x for x in ports), t)
+    cons = "".join('      - Host: 127.0.0.1\n        Port: %d\n        ClientTLSCert: crypto/ordererOrganizations/example.com/orderers/%s/tls/server.crt\n        ServerTLSCert: crypto/ordererOrganizations/example.com/orderers/%s/tls/server.crt\n' % (x, h, h) for x, h in zip(ports, hosts))
+    t = re.sub(r'(    Consenters:\n)(?:      - Host:.*\n        Port:.*\n        ClientTLSCert:.*\n        ServerTLSCert:.*\n)+', lambda m: m.group(1) + cons, t)
+    open(p, "w").write(t)
+PY
+  fi
   # register the Chaincode-as-a-Service builder in the peers' core.yaml
   python3 - "$NET/cfg/core.yaml" "$DEP/ccaas_builder" <<'PY'
 import re, sys
@@ -60,19 +89,21 @@ PY
   [ -f "$NET/genesis.block" ] || (cd "$NET" && FABRIC_CFG_PATH="$NET" configtxgen -profile CityShieldChannel -outputBlock genesis.block -channelID "$CH" >/dev/null 2>&1) || die "configtxgen"
 }
 
-start_orderer() {
-  mkdir -p "$NET/orderer"
-  local T="$OR/orderers/orderer.example.com/tls" M="$OR/orderers/orderer.example.com/msp"
+start_orderer() {  # start_orderer [1|2|3]
+  local i=${1:-1} h port adm d; h=$(ord_host $i); port=$(ord_port $i); adm=$(ord_admin $i)
+  d="$NET/$(ord_name $i)"      # orderer 1 keeps the pre-v12 folder name "orderer" so an existing network keeps its ledger
+  mkdir -p "$d"
+  local T="$OR/orderers/$h/tls" M="$OR/orderers/$h/msp"
   (
-    export ORDERER_GENERAL_LISTENADDRESS=127.0.0.1 ORDERER_GENERAL_LISTENPORT=7050 ORDERER_GENERAL_LOCALMSPID=OrdererMSP ORDERER_GENERAL_LOCALMSPDIR="$M"
+    export ORDERER_GENERAL_LISTENADDRESS=127.0.0.1 ORDERER_GENERAL_LISTENPORT=$port ORDERER_GENERAL_LOCALMSPID=OrdererMSP ORDERER_GENERAL_LOCALMSPDIR="$M"
     export ORDERER_GENERAL_TLS_ENABLED=true ORDERER_GENERAL_TLS_PRIVATEKEY="$T/server.key" ORDERER_GENERAL_TLS_CERTIFICATE="$T/server.crt" ORDERER_GENERAL_TLS_ROOTCAS="[$T/ca.crt]"
     export ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE="$T/server.crt" ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY="$T/server.key" ORDERER_GENERAL_CLUSTER_ROOTCAS="[$T/ca.crt]"
     export ORDERER_GENERAL_BOOTSTRAPMETHOD=none ORDERER_CHANNELPARTICIPATION_ENABLED=true
     export ORDERER_ADMIN_TLS_ENABLED=true ORDERER_ADMIN_TLS_PRIVATEKEY="$T/server.key" ORDERER_ADMIN_TLS_CERTIFICATE="$T/server.crt" ORDERER_ADMIN_TLS_ROOTCAS="[$T/ca.crt]"
-    export ORDERER_ADMIN_TLS_CLIENTROOTCAS="[$T/ca.crt]" ORDERER_ADMIN_LISTENADDRESS=127.0.0.1:7053
-    export ORDERER_FILELEDGER_LOCATION="$NET/orderer/ledger" ORDERER_CONSENSUS_WALDIR="$NET/orderer/wal" ORDERER_CONSENSUS_SNAPDIR="$NET/orderer/snap"
-    export ORDERER_OPERATIONS_LISTENADDRESS=127.0.0.1:8443 ORDERER_GENERAL_GENESISPROFILE=CityShieldChannel
-    start_proc orderer orderer
+    export ORDERER_ADMIN_TLS_CLIENTROOTCAS="[$T/ca.crt]" ORDERER_ADMIN_LISTENADDRESS=127.0.0.1:$adm
+    export ORDERER_FILELEDGER_LOCATION="$d/ledger" ORDERER_CONSENSUS_WALDIR="$d/wal" ORDERER_CONSENSUS_SNAPDIR="$d/snap"
+    export ORDERER_OPERATIONS_LISTENADDRESS=127.0.0.1:$((8443 + i - 1)) ORDERER_GENERAL_GENESISPROFILE=CityShieldChannel
+    start_proc "$(ord_name $i)" orderer
   )
 }
 start_peer() {  # start_peer 1|2
@@ -91,10 +122,12 @@ start_peer() {  # start_peer 1|2
 }
 wait_port() { for _ in $(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/$1) 2>/dev/null && return 0; sleep 0.5; done; die "port $1 did not open (see $NET/logs)"; }
 
-join_orderer() {
-  osnadmin channel list -o 127.0.0.1:7053 --ca-file "$ORDERER_CA" --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" 2>/dev/null | grep -q "\"$CH\"" && return 0
-  osnadmin channel join --channelID "$CH" --config-block "$NET/genesis.block" -o 127.0.0.1:7053 --ca-file "$ORDERER_CA" \
-    --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" >/dev/null || die "osnadmin join"
+join_orderer() {  # join_orderer [1|2|3]
+  local i=${1:-1} adm h; adm=$(ord_admin $i); h=$(ord_host $i)
+  local ca="$OR/orderers/$h/tls/ca.crt"
+  osnadmin channel list -o 127.0.0.1:$adm --ca-file "$ca" --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" 2>/dev/null | grep -q "\"$CH\"" && return 0
+  osnadmin channel join --channelID "$CH" --config-block "$NET/genesis.block" -o 127.0.0.1:$adm --ca-file "$ca" \
+    --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" >/dev/null || die "osnadmin join (orderer $i)"
 }
 join_peers() {
   for n in 1 2; do
@@ -126,7 +159,7 @@ deploy_cc() {
   start_cc
   org_env 1
   peer lifecycle chaincode querycommitted --channelID "$CH" --name "$CC" 2>/dev/null | grep -q "Version: 1.0" && return 0   # restart of an existing network
-  local ord=(-o 127.0.0.1:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA")
+  local lo; lo=($(live_orderer)); local ord=(-o 127.0.0.1:${lo[0]} --ordererTLSHostnameOverride ${lo[1]} --tls --cafile "$ORDERER_CA")
   for n in 1 2; do
     org_env $n
     peer lifecycle chaincode approveformyorg "${ord[@]}" --channelID "$CH" --name "$CC" --version 1.0 --package-id "$id" --sequence 1 \
@@ -142,7 +175,7 @@ deploy_cc() {
 }
 invoke() {  # invoke <json> : as Org1 Admin, endorsed by both orgs
   org_env 1
-  peer chaincode invoke -o 127.0.0.1:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C "$CH" -n "$CC" -c "$1" --waitForEvent \
+  local lo; lo=($(live_orderer)); peer chaincode invoke -o 127.0.0.1:${lo[0]} --ordererTLSHostnameOverride ${lo[1]} --tls --cafile "$ORDERER_CA" -C "$CH" -n "$CC" -c "$1" --waitForEvent \
     --peerAddresses 127.0.0.1:7051 --tlsRootCertFiles "$O1/peers/peer0.org1.example.com/tls/ca.crt" \
     --peerAddresses 127.0.0.1:9051 --tlsRootCertFiles "$O2/peers/peer0.org2.example.com/tls/ca.crt" 2>&1
 }
@@ -151,9 +184,13 @@ query() { org_env 1; peer chaincode query -C "$CH" -n "$CC" -c "$1" 2>&1; }
 up() {
   need peer; need orderer; need configtxgen; need cryptogen; need osnadmin
   gen_crypto
-  [ -f "$NET/pids/orderer.pid" ] && kill -0 "$(cat "$NET/pids/orderer.pid")" 2>/dev/null || start_orderer
-  wait_port 7050; wait_port 7053
-  join_orderer
+  for i in $(seq 1 "$ORDERERS"); do
+    n=$(ord_name $i)
+    { [ -f "$NET/pids/$n.pid" ] && kill -0 "$(cat "$NET/pids/$n.pid")" 2>/dev/null; } || start_orderer $i
+  done
+  for i in $(seq 1 "$ORDERERS"); do wait_port "$(ord_port $i)"; wait_port "$(ord_admin $i)"; done
+  for i in $(seq 1 "$ORDERERS"); do join_orderer $i; done
+  [ "$ORDERERS" -gt 1 ] && sleep 4          # Raft election
   [ -f "$NET/pids/peer1.pid" ] && kill -0 "$(cat "$NET/pids/peer1.pid")" 2>/dev/null || start_peer 1
   [ -f "$NET/pids/peer2.pid" ] && kill -0 "$(cat "$NET/pids/peer2.pid")" 2>/dev/null || start_peer 2
   wait_port 7051; wait_port 9051
@@ -169,7 +206,8 @@ down() {
   pkill -f "fabric-chaincode-node server" 2>/dev/null; echo FABRIC_DOWN
 }
 status() {
-  for f in orderer peer1 peer2 chaincode; do
+  for f in orderer orderer2 orderer3 peer1 peer2 chaincode; do
+    [ -f "$NET/pids/$f.pid" ] || continue
     if [ -f "$NET/pids/$f.pid" ] && kill -0 "$(cat "$NET/pids/$f.pid")" 2>/dev/null; then echo "$f: running"; else echo "$f: stopped"; fi
   done
   query '{"function":"params","Args":[]}' 2>&1 | tail -1
@@ -181,5 +219,7 @@ case "${1:-}" in
   status) status ;;
   invoke) invoke "$2" ;;
   query) query "$2" ;;
-  *) echo "usage: $0 up|down|reset|status"; exit 1 ;;
+  stop-orderer) kill "$(cat "$NET/pids/$(ord_name "${2:-1}").pid")" && echo "orderer ${2:-1} stopped" ;;      # for failover tests
+  start-orderer) start_orderer "${2:-1}" && echo "orderer ${2:-1} started" ;;
+  *) echo "usage: $0 up|down|reset|status|stop-orderer N|start-orderer N"; exit 1 ;;
 esac

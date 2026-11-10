@@ -5,6 +5,10 @@ OrdererOrgs:
     Specs:
       - Hostname: orderer
         SANS: [localhost, 127.0.0.1]
+      - Hostname: orderer2
+        SANS: [localhost, 127.0.0.1]
+      - Hostname: orderer3
+        SANS: [localhost, 127.0.0.1]
 PeerOrgs:
   - Name: Org1
     Domain: org1.example.com

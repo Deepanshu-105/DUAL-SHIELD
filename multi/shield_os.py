@@ -420,3 +420,70 @@ def tx_bytes():
 def powershell(script, timeout=60):
     r = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=timeout)
     return r.returncode, r.stdout, r.stderr
+
+
+class KernelWriters:
+    """Linux only: the KERNEL tells us which pid wrote to a file (fanotify). Precise, unlike sampling /proc.
+    Needs root (CAP_SYS_ADMIN) and a kernel with fanotify; otherwise .ok is False and killrule keeps using the
+    open-file / top-writer fallbacks. Marks the whole mount that holds `path` and keeps only events under `path`."""
+    FAN_MODIFY, FAN_CLOSE_WRITE, FAN_MARK_ADD, FAN_MARK_MOUNT = 0x2, 0x8, 0x1, 0x10
+    FAN_CLOEXEC, FAN_NONBLOCK = 0x1, 0x2
+    META = "=IBBHQii"                                  # event_len, vers, reserved, metadata_len, mask, fd, pid
+
+    def __init__(self, path):
+        self.ok, self.pids, self.root = False, {}, os.path.realpath(path)
+        self._lock = None
+        if IS_WIN or not sys.platform.startswith("linux"):
+            return
+        try:
+            import ctypes, struct, threading
+            self._struct, self._ct = struct, ctypes
+            libc = ctypes.CDLL(None, use_errno=True)
+            fd = libc.fanotify_init(self.FAN_CLOEXEC | self.FAN_NONBLOCK, os.O_RDONLY | getattr(os, "O_LARGEFILE", 0))
+            if fd < 0:
+                return
+            r = libc.fanotify_mark(fd, self.FAN_MARK_ADD | self.FAN_MARK_MOUNT, ctypes.c_ulonglong(self.FAN_MODIFY | self.FAN_CLOSE_WRITE),
+                                   -100, self.root.encode())
+            if r < 0:
+                os.close(fd)
+                return
+            self.fd, self._lock, self.ok = fd, threading.Lock(), True
+            threading.Thread(target=self._loop, daemon=True).start()
+        except Exception:
+            self.ok = False
+
+    def _loop(self):
+        import select
+        size = self._struct.calcsize(self.META)
+        me = os.getpid()
+        while True:
+            try:
+                select.select([self.fd], [], [], 1.0)
+                buf = os.read(self.fd, 65536)
+            except BlockingIOError:
+                continue
+            except Exception:
+                return
+            off = 0
+            while off + size <= len(buf):
+                ln, _v, _r, _ml, mask, efd, pid = self._struct.unpack_from(self.META, buf, off)
+                if efd >= 0:
+                    try:
+                        p = os.readlink("/proc/self/fd/%d" % efd)
+                    except Exception:
+                        p = ""
+                    os.close(efd)
+                    if pid != me and p.startswith(self.root):
+                        with self._lock:
+                            self.pids[pid] = time.time()
+                off += ln or size
+
+    def writers(self, within=10.0):
+        """pids that wrote under the watched folder in the last `within` seconds, most recent first."""
+        if not self.ok:
+            return []
+        now = time.time()
+        with self._lock:
+            for p in [p for p, t in self.pids.items() if now - t > 60]:
+                del self.pids[p]
+            return [p for p, t in sorted(self.pids.items(), key=lambda x: -x[1]) if now - t <= within]

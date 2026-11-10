@@ -40,6 +40,7 @@ class KillRule:
         self.suspects = set()                     # writers seen at earlier flags
         self.cooldown_until = 0.0
         self.safe = _ancestors()
+        self.kernel = shield_os.KernelWriters(watch_dir) if os.environ.get("KERNEL_HOOK", "1") == "1" else None   # fanotify: kernel-reported writer pids (Linux, root)
         self.writers = shield_os.WriterTracker()   # who writes most right now (used when no open file is seen)
         self.heavy = []
 
@@ -65,7 +66,8 @@ class KillRule:
 
         t_trigger = time.time()
         print("%.6f KILL_TRIGGER distinct_files=%d" % (t_trigger, len(self.recent)), flush=True)
-        targets, how = self.suspects & self._alive(self.suspects), "open-file"
+        kw = {p for p in (self.kernel.writers() if self.kernel and self.kernel.ok else []) if p not in self.safe and self._alive([p])}
+        targets, how = (kw, "kernel-fanotify") if kw else (self.suspects & self._alive(self.suspects), "open-file")
         if not targets:
             targets, how = {p for p in self.heavy if self._alive([p])}, "top-writer"
         if not targets:
