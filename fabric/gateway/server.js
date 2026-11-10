@@ -102,9 +102,36 @@ function body(req) {
 const send = (res, code, obj) => { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json", "content-length": Buffer.byteLength(b) }); res.end(b); };
 const FN = /^[A-Za-z][A-Za-z0-9_]{0,40}$/;
 
+// ---- v11 hardening: per-client token bucket, request counters (/metrics), connection timeouts, graceful stop
+const RATE = Number(process.env.GATEWAY_RATE || 50), BURST = Number(process.env.GATEWAY_BURST || 100);   // requests/second and burst per client
+const buckets = new Map();
+const stats = { requests: 0, tx_ok: 0, tx_err: 0, query: 0, rate_limited: 0, forbidden: 0, started: Date.now() };
+function clientKey(req) {
+  const c = TLS && req.socket.getPeerCertificate ? (req.socket.getPeerCertificate().subject || {}).CN : null;
+  return c || req.socket.remoteAddress || "?";
+}
+function limited(req) {
+  if (RATE <= 0) return false;
+  const k = clientKey(req), now = Date.now();
+  let b = buckets.get(k);
+  if (!b) { b = { t: BURST, at: now }; buckets.set(k, b); if (buckets.size > 1000) buckets.delete(buckets.keys().next().value); }
+  b.t = Math.min(BURST, b.t + ((now - b.at) / 1000) * RATE); b.at = now;
+  if (b.t < 1) return true;
+  b.t -= 1; return false;
+}
+function metricsText() {
+  const up = Math.round((Date.now() - stats.started) / 1000);
+  return [["gateway_requests_total", stats.requests], ["gateway_tx_ok_total", stats.tx_ok], ["gateway_tx_error_total", stats.tx_err], ["gateway_query_total", stats.query],
+    ["gateway_rate_limited_total", stats.rate_limited], ["gateway_forbidden_total", stats.forbidden], ["gateway_last_event_id", lastId], ["gateway_uptime_seconds", up]]
+    .map(([n, v]) => `# TYPE ${n} counter\n${n} ${v}`).join("\n") + "\n";
+}
+
 async function handler(req, res) {
   try {
     const u = new URL(req.url, "http://x");
+    stats.requests++;
+    if (u.pathname !== "/health" && limited(req)) { stats.rate_limited++; res.setHeader("retry-after", "1"); return send(res, 429, { ok: false, error: "rate limit" }); }
+    if (req.method === "GET" && u.pathname === "/metrics") { const m = metricsText(); res.writeHead(200, { "content-type": "text/plain" }); return res.end(m); }
     if (req.method === "GET" && u.pathname === "/health") return send(res, 200, { ok: true, head: lastId, tls: TLS });
     if (req.method === "GET" && u.pathname === "/events") {
       const after = Number(u.searchParams.get("after") || 0), limit = Math.min(Number(u.searchParams.get("limit") || 500), 2000);
@@ -113,10 +140,13 @@ async function handler(req, res) {
     if (req.method === "POST" && (u.pathname === "/tx" || u.pathname === "/query")) {
       const b = await body(req), who = Number(b.who);
       if (!Number.isInteger(who) || !IDENT[who]) return send(res, 400, { ok: false, error: "unknown identity" });
-      if (!allowed(req, who)) return send(res, 403, { ok: false, error: "this certificate may not use that identity" });
+      if (!allowed(req, who)) { stats.forbidden++; return send(res, 403, { ok: false, error: "this certificate may not use that identity" }); }
       if (!FN.test(String(b.fn)) || !Array.isArray(b.args) || b.args.some((a) => typeof a !== "string" && typeof a !== "number")) return send(res, 400, { ok: false, error: "bad request" });
       const { contract } = contractFor(who), args = b.args.map(String);
-      const out = u.pathname === "/tx" ? await contract.submitTransaction(b.fn, ...args) : await contract.evaluateTransaction(b.fn, ...args);
+      let out;
+      try { out = u.pathname === "/tx" ? await contract.submitTransaction(b.fn, ...args) : await contract.evaluateTransaction(b.fn, ...args); }
+      catch (e) { if (u.pathname === "/tx") stats.tx_err++; throw e; }
+      if (u.pathname === "/tx") stats.tx_ok++; else stats.query++;
       return send(res, 200, { ok: true, result: dec(out) });
     }
     return send(res, 404, { ok: false, error: "not found" });
@@ -134,6 +164,8 @@ function main() {
     srv = https.createServer({ key: fs.readFileSync(path.join(d, "node.key")), cert: fs.readFileSync(path.join(d, "node.crt")), ca: fs.readFileSync(path.join(d, "ca.crt")),
       requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.2" }, handler);
   } else srv = http.createServer(handler);
+  srv.headersTimeout = 10000; srv.requestTimeout = 30000; srv.keepAliveTimeout = 5000; srv.maxConnections = Number(process.env.GATEWAY_MAXCONN || 200);
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { console.log("GATEWAY_STOP"); srv.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); });
   srv.listen(PORT, HOST, () => console.log(`GATEWAY_UP :${PORT} ${TLS ? "mutual TLS" : "plain HTTP (lab)"}${LAB ? " lab identities" : ""} channel=${CH} chaincode=${CC}`));
   eventLoop();
 }

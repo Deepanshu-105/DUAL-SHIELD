@@ -10,7 +10,7 @@
   python detector/win_logon_watch.py            # loop forever
   python detector/win_logon_watch.py --once     # one poll (tests)
 Needs audit policy "Audit Logon" (success and failure), which Windows enables by default on most editions.
-Limits: IPv4 only; the source address in 4625 is empty for some local or interactive logons (ignored); events appear a moment
+Limits: the source address in 4625 is empty for some local or interactive logons (ignored); events appear a moment
 after the attempt, so detection is a little slower than reading auth.log on Linux."""
 import argparse, ipaddress, json, os, re, socket, sys, time
 
@@ -40,10 +40,12 @@ def _rows(text):
 
 def _ipv4(x):
     try:
-        a = ipaddress.ip_address((x or "").strip())
+        a = ipaddress.ip_address((x or "").strip().split("%")[0])
     except ValueError:
         return None
-    return str(a) if a.version == 4 and not a.is_loopback and not a.is_unspecified else None
+    if a.is_loopback or a.is_unspecified or a.is_link_local or a.is_multicast:
+        return None
+    return str(a)                        # IPv4 or global IPv6 (v11)
 
 
 def lines_from_security(rows):

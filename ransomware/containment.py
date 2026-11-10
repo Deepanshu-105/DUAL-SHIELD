@@ -75,9 +75,26 @@ def contain(mode, allow, reason, flagged=(), vault_mod=None):
     if vault_mod is None:
         import vault as vault_mod
     vault_mod.freeze(reason)
+    # v11 product mode: CONTAIN=apply|dry|off in the environment overrides the file; CONTAIN_ALLOW="ip,ip" (D, P, the admin PC) is added
+    # to the allow list; apply with an EMPTY allow list would cut this laptop off from everything (even the dashboard that
+    # could release it), so it is refused and runs as dry; and quarantine releases itself after QUARANTINE_MAX_S (default 900 s,
+    # 0 = never) so a false alarm cannot lock a machine out for good.
+    mode = os.environ.get("CONTAIN") or mode
+    allow = list(dict.fromkeys(list(allow) + [x.strip() for x in os.environ.get("CONTAIN_ALLOW", "").split(",") if x.strip()]))
+    if mode == "apply" and not allow:
+        print("CONTAIN_REFUSED apply needs a non-empty allow list (set CONTAIN_ALLOW=D_IP,P_IP); running as dry", flush=True)
+        mode = "dry"
     net = []
     if mode in ("dry", "apply"):
         net = quarantine(allow, apply=(mode == "apply"))
+        max_s = float(os.environ.get("QUARANTINE_MAX_S", "900"))
+        if mode == "apply" and max_s > 0:
+            import threading
+            def _auto():
+                if is_quarantined():
+                    print("%.6f CONTAIN_AUTO_RELEASE after %.0fs" % (time.time(), max_s), flush=True)
+                    release(True, allow)
+            th = threading.Timer(max_s, _auto); th.daemon = True; th.start()
     ev = {"time": t, "reason": reason, "mode": mode, "allow": list(allow),
           "flagged_files": sorted(set(flagged)), "network": net,
           "next_steps": ["python3 vault.py log", "python3 vault.py restore <folder>",

@@ -35,6 +35,40 @@ def parse_neigh(text):
     return out
 
 
+WIN_ARP = re.compile(r"^\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f]{2}(?:-[0-9a-f]{2}){5})\s+(\w+)", re.I)
+
+
+def parse_arp_a(text):
+    """Windows `arp -a` text -> {ip: (mac, interface)}. Only 'dynamic' entries (static ones are multicast/broadcast or our own pins)."""
+    out, iface = {}, "?"
+    for ln in text.splitlines():
+        m = re.match(r"^\s*Interface:\s*(\S+)", ln, re.I)
+        if m:
+            iface = m.group(1)
+            continue
+        m = WIN_ARP.match(ln)
+        if m and m.group(3).lower() == "dynamic":
+            out[m.group(1)] = (m.group(2).lower().replace("-", ":"), iface)
+    return out
+
+
+def parse_route_print(text):
+    """Windows `route print -4` -> default gateway with the lowest metric, or None."""
+    best = None
+    for ln in text.splitlines():
+        p = ln.split()
+        if len(p) >= 5 and p[0] == "0.0.0.0" and p[1] == "0.0.0.0" and re.match(r"^\d+\.\d+\.\d+\.\d+$", p[2]) and p[4].isdigit():
+            if best is None or int(p[4]) < best[0]:
+                best = (int(p[4]), p[2])
+    return best[1] if best else None
+
+
+def neighbours():
+    if shield_os.IS_WIN:
+        return parse_arp_a(subprocess.run(["arp", "-a"], capture_output=True, text=True).stdout)
+    return parse_neigh(subprocess.run(["ip", "neigh", "show"], capture_output=True, text=True).stdout)
+
+
 class ArpAnalyzer:
     def __init__(self, pinned=None, flap_window=60.0, flap_count=3, cooldown=300.0):
         self.pinned = dict(pinned or {})            # ip -> mac we trust (learned or given)
@@ -81,6 +115,8 @@ class ArpAnalyzer:
 
 
 def default_gateway():
+    if shield_os.IS_WIN:
+        return parse_route_print(subprocess.run(["route", "print", "-4"], capture_output=True, text=True).stdout)
     r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
     m = re.search(r"default via (\d+\.\d+\.\d+\.\d+)", r.stdout)
     return m.group(1) if m else None
@@ -100,11 +136,10 @@ def main():
     gw = default_gateway()
     print("ARP_WATCH on gateway=%s dry=%s pinned=%s" % (gw, a.dry, list(pinned)), flush=True)
     while True:
-        txt = subprocess.run(["ip", "neigh", "show"], capture_output=True, text=True).stdout
-        for kind, ip, detail, fix in an.feed(time.time(), parse_neigh(txt), gw):
+        for kind, ip, detail, fix in an.feed(time.time(), neighbours(), gw):
             if kind == "gateway-mac-changed":
                 print("[ARP] %s  %s" % (kind, detail), flush=True)
-                if fix and a.pin_static and not a.dry:
+                if fix and a.pin_static and not a.dry and not shield_os.IS_WIN:
                     subprocess.run(fix.split(), capture_output=True)
                     print("ARP_PINNED", fix, flush=True)
                 elif fix:
@@ -115,6 +150,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if shield_os.IS_WIN:
-        sys.exit("arp_watch.py reads `ip neigh` (Linux). Not available on Windows yet.")
     main()

@@ -14,7 +14,8 @@ foreach ($f in 'parser_block.log','metrics.log') { New-Item -ItemType File -Forc
 $wl = "$($env:D_IP),$($env:P_IP)"
 # Layer 1: event log -> auth.log lines -> parser (blocks with Windows Firewall rules, reports to the chain)
 Start-Bg $py @('-u', (Join-Path $ROOT 'detector\win_logon_watch.py')) 'win_logon_watch.out' $ROOT | Out-Null
-$env:COREPORT = '1'; $env:WHITELIST_EXTRA = $wl
+$env:COREPORT = $(if ($env:GATEWAY_LAB -eq '0') { '0' } else { '1' }); $env:WHITELIST_EXTRA = $wl
+$env:CONTAIN_ALLOW = "$($env:D_IP),$($env:P_IP)"
 Start-Bg $py @('-u', (Join-Path $ROOT 'detector\ssh_parser.py')) 'ssh_parser.out' (Join-Path $ROOT 'detector') | Out-Null
 if ($env:LOGIN_WATCH -eq '1') { Start-Bg $py @('-u', (Join-Path $ROOT 'detector\login_watch.py')) 'login_watch.out' $ROOT | Out-Null }
 if ([int]($env:BLOCK_TTL + 0) -gt 0) { Start-Bg $py @('-u', (Join-Path $ROOT 'detector\expire_blocks.py'), '--ttl', $env:BLOCK_TTL) 'expire.out' $ROOT | Out-Null }

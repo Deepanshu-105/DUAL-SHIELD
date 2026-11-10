@@ -178,9 +178,9 @@ class Reactor:
         if self.chain_report and not self.dry:
             def run():
                 try:
-                    self.chain_report.report_to_chain(ip, kind, who=1)
+                    self.chain_report.report_to_chain(ip, kind, who=int(os.environ.get("NODE_ID", "1")))
                     if os.environ.get("COREPORT") == "1":     # DEMO ONLY, as in ssh_parser.py
-                        self.chain_report.report_to_chain(ip, kind, who=2)
+                        self.chain_report.report_to_chain(ip, kind, who=2 if int(os.environ.get("NODE_ID", "1")) == 1 else 1)
                     print("[CHAIN] reported %s (%s)" % (ip, kind), flush=True)
                 except Exception as e:
                     print("[WARN] chain report failed for %s: %s" % (ip, e), flush=True)

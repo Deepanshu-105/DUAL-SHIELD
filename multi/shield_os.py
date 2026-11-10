@@ -15,6 +15,7 @@ import ipaddress, json, os, subprocess, sys, tempfile, time
 
 IS_WIN = (os.environ.get("SHIELD_OS") or sys.platform).lower().startswith("win")
 SET = "city_blacklist"
+SET6 = "city_blacklist6"      # v11: IPv6 addresses (ipset hash:ip cannot hold them)
 RULE_PREFIX = "DualShield-Block-"
 QUAR_PREFIX = "DualShield-Quar-Allow-"
 CHAIN = "DS_QUAR"
@@ -105,16 +106,25 @@ def block_init():
     rule = ["INPUT", "-m", "set", "--match-set", SET, "src", "-j", "DROP"]
     if _run(["iptables", "-C", *rule]).returncode != 0:
         _run(["iptables", "-I", *rule], check=True)
+    # IPv6: best effort (a host without ip6tables simply has no IPv6 blocking)
+    if _run(["ipset", "create", SET6, "hash:ip", "family", "inet6", "-exist"]).returncode == 0:
+        rule6 = ["INPUT", "-m", "set", "--match-set", SET6, "src", "-j", "DROP"]
+        if _run(["ip6tables", "-C", *rule6]).returncode != 0:
+            _run(["ip6tables", "-I", *rule6])
 
 
 def _ip(ip):
-    return str(ipaddress.ip_address(ip))
+    return str(ipaddress.ip_address(str(ip).split("%")[0]))
+
+
+def _set(ip):
+    return SET6 if ":" in ip else SET
 
 
 def block_add(ip):
     ip = _ip(ip)
     if not IS_WIN:
-        _run(["ipset", "add", SET, ip, "-exist"], check=True)
+        _run(["ipset", "add", _set(ip), ip, "-exist"], check=True)
         return
     if block_test(ip):
         return
@@ -131,7 +141,7 @@ def block_add(ip):
 def block_del(ip):
     ip = _ip(ip)
     if not IS_WIN:
-        _run(["ipset", "del", SET, ip, "-exist"], check=True)
+        _run(["ipset", "del", _set(ip), ip, "-exist"], check=True)
         return
     _run([NETSH, "advfirewall", "firewall", "delete", "rule", "name=" + RULE_PREFIX + ip])   # rc 1 = already gone, fine
     s = _state_load()
@@ -143,24 +153,28 @@ def block_del(ip):
 def block_test(ip):
     ip = _ip(ip)
     if not IS_WIN:
-        return _run(["ipset", "test", SET, ip]).returncode == 0
+        return _run(["ipset", "test", _set(ip), ip]).returncode == 0
     r = _run([NETSH, "advfirewall", "firewall", "show", "rule", "name=" + RULE_PREFIX + ip])
     return r.returncode == 0 and RULE_PREFIX + ip in r.stdout
 
 
 def block_list():
     if not IS_WIN:
-        out = _run(["ipset", "list", SET])
-        if out.returncode != 0:
-            return []
-        txt = out.stdout.split("Members:", 1)
-        return [l.split()[0] for l in txt[1].splitlines() if l.strip()] if len(txt) == 2 else []
+        res = []
+        for name in (SET, SET6):
+            out = _run(["ipset", "list", name])
+            if out.returncode != 0:
+                continue
+            txt = out.stdout.split("Members:", 1)
+            if len(txt) == 2:
+                res += [l.split()[0] for l in txt[1].splitlines() if l.strip()]
+        return res
     return list(_state_load()["blocked"])
 
 
 def block_flush():
     if not IS_WIN:
-        _run(["ipset", "flush", SET])
+        _run(["ipset", "flush", SET]); _run(["ipset", "flush", SET6])
         return
     for ip in list(_state_load()["blocked"]):
         block_del(ip)

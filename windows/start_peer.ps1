@@ -11,6 +11,12 @@ Open-AgentPort
 New-Item -ItemType File -Force -Path (Join-Path $LOGDIR 'peer_block.log') | Out-Null
 $env:AGENT_SECRET = $env:AGENT_SECRET_P; $env:ROLE = 'peer'
 Start-Bg $py @('-u', (Join-Path $ROOT 'multi\agent.py')) 'agent.out' $ROOT | Out-Null
+if ($env:PEER_DETECT -eq '1') {   # P also guards its own logons and reports as node 2 (a real second reporter)
+  $env:NODE_ID = '2'; $env:COREPORT = '0'; $env:WHITELIST_EXTRA = "$($env:D_IP),$($env:T_IP)"
+  Start-Bg $py @('-u', (Join-Path $ROOT 'detector\win_logon_watch.py')) 'win_logon_watch.out' $ROOT | Out-Null
+  Start-Bg $py @('-u', (Join-Path $ROOT 'detector\ssh_parser.py')) 'ssh_parser.out' (Join-Path $ROOT 'detector') | Out-Null
+  Remove-Item Env:NODE_ID
+}
 if ([int]($env:BLOCK_TTL + 0) -gt 0) { Start-Bg $py @('-u', (Join-Path $ROOT 'detector\expire_blocks.py'), '--ttl', $env:BLOCK_TTL) 'expire.out' $ROOT | Out-Null }
 Write-Host "P (Windows) READY: agent on :8800, blocking confirmed IPs with Windows Firewall rules. Stop with windows\stop.ps1" -ForegroundColor Green
 & $py -u (Join-Path $ROOT 'network\listener.py')

@@ -29,6 +29,7 @@ except Exception as e:
     chain_report = None
     print(f"[WARN] chain reporting is off: {e}", flush=True)
 
+NODE_ID = int(os.environ.get("NODE_ID", "1"))   # v11: 1 = target node, 2 = peer node (a peer that also runs this parser is a real second reporter)
 LOG_PATH = os.environ.get("LOG_PATH") or shield_os.log_path("auth.log")   # Windows: written by win_logon_watch.py
 IPSET_NAME = "city_blacklist"
 PARSER_LOG = os.environ.get("PARSER_LOG") or shield_os.log_path("parser_block.log")
@@ -36,7 +37,7 @@ THRESHOLD = 3   # failures ...
 WINDOW = 5      # ... inside this many seconds
 
 # Never block these: the SOC host (the Docker bridge gateway) and the peer node.
-WHITELIST = {"172.30.0.1", "172.30.0.11"}
+WHITELIST = {"172.30.0.1", "172.30.0.11", "::1", "127.0.0.1"}
 # Four-laptop mode: the dashboard and peer laptops are added through WHITELIST_EXTRA="ip1,ip2".
 WHITELIST |= {x.strip() for x in os.environ.get("WHITELIST_EXTRA", "").split(",") if x.strip()}
 
@@ -56,7 +57,7 @@ def _never_block(ip):
 
 
 FAIL_PATTERN = re.compile(
-    r"Failed password for (?:invalid user )?\S+ from (\d{1,3}(?:\.\d{1,3}){3})"
+    r"Failed password for (?:invalid user )?\S+ from (\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7})"
 )
 
 fail_times = defaultdict(deque)
@@ -112,9 +113,12 @@ def report_async(ip):
     def run():
         try:
             fp = fingerprints.get(ip, "no-hassh")
-            chain_report.report_to_chain(ip, fp, who=1)
-            if os.environ.get("COREPORT") == "1":  # DEMO ONLY: stands in for the peer's report
-                chain_report.report_to_chain(ip, fp, who=2)
+            if ":" in ip:                           # IPv6 is blocked locally; the chain record format is IPv4 only
+                print(f"[CHAIN] {ip}: IPv6, not shared on the chain", flush=True)
+                return
+            chain_report.report_to_chain(ip, fp, who=NODE_ID)       # T is node 1, P is node 2 (each reports what IT saw)
+            if os.environ.get("COREPORT") == "1":  # DEMO ONLY (GATEWAY_LAB=1): one laptop stands in for the peer's report
+                chain_report.report_to_chain(ip, fp, who=2 if NODE_ID == 1 else 1)
             print(f"[CHAIN] reported {ip}", flush=True)
         except Exception as e:
             print(f"[WARN] chain report failed for {ip}: {e}", flush=True)
