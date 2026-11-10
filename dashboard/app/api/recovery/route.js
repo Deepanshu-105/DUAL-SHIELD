@@ -23,9 +23,7 @@ export async function GET() {
 }
 
 export async function POST(req) {
-  if (req.headers.get("x-ds-confirm") !== "1") {
-    return Response.json({ ok: false, output: "missing x-ds-confirm header" }, { status: 403 });
-  }
+  const { w, deny } = needAdmin(req); if (deny) return deny;
   const body = await req.json().catch(() => ({}));
   const action = body.action;
   if (action !== "recover" && action !== "unfreeze") {
