@@ -8,7 +8,7 @@ export PATH="$VENV/bin:$PATH"
 pkill -f multi/join.py 2>/dev/null
 resolve_peers target
 
-pkill -f ssh_parser.py 2>/dev/null; pkill -f flood_detector.py 2>/dev/null; pkill -f expire_blocks.py 2>/dev/null; pkill -f login_watch.py 2>/dev/null; pkill -f arp_watch.py 2>/dev/null; pkill -f multi/agent.py 2>/dev/null
+pkill -f ssh_parser.py 2>/dev/null; pkill -f flood_detector.py 2>/dev/null; pkill -f expire_blocks.py 2>/dev/null; pkill -f login_watch.py 2>/dev/null; pkill -f arp_watch.py 2>/dev/null; [ -f /var/run/ds_agent_target.pid ] && kill "$(cat /var/run/ds_agent_target.pid)" 2>/dev/null   # only T's own agent (P may run on this laptop)
 service ssh start 2>/dev/null || service sshd start
 service rsyslog start
 touch /var/log/auth.log
@@ -25,7 +25,8 @@ COREPORT="${GATEWAY_LAB:-1}" PYTHONPATH="$ROOT/network" \
   "$PY" "$ROOT/network/chain_report.py" 203.0.113.1 >/dev/null 2>&1 || true      # warm-up report
 "$ROOT/blockchain/scripts/anchor_clean.sh" "$A_IP" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback will say ANCHOR_MISSING)"
 
-CONTAIN_ALLOW="$D_IP,$P_IP" CONTAIN="${CONTAIN:-}" QUARANTINE_MAX_S="${QUARANTINE_MAX_S:-900}" AGENT_SECRET="$AGENT_SECRET_T" ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
+CONTAIN_ALLOW="$D_IP,$P_IP" CONTAIN="${CONTAIN:-}" QUARANTINE_MAX_S="${QUARANTINE_MAX_S:-900}" AGENT_PORT="${T_AGENT_PORT:-8800}" AGENT_SECRET="$AGENT_SECRET_T" ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent_target.out 2>&1 &
+echo $! > /var/run/ds_agent_target.pid
 # v3, opt-in (FLOOD=1 / BLOCK_TTL=seconds in multi/config.env): DDoS and port-scan detector, and block expiry.
 if [ "${FLOOD:-0}" = "1" ]; then
   : > /var/log/flood_block.log
@@ -49,7 +50,7 @@ if [ "${BLOCK_TTL:-0}" -gt 0 ] 2>/dev/null; then
   nohup "$PY" -u "$ROOT/detector/expire_blocks.py" --ttl "$BLOCK_TTL" > /var/log/expire.out 2>&1 &
   echo "block expiry on: $BLOCK_TTL s"
 fi
-echo "T READY: agent on :8800, SSH on :22, protecting against $A_IP. Parser log below (Ctrl+C stops it)."
+echo "T READY: agent on :${T_AGENT_PORT:-8800}, SSH on :22, protecting against $A_IP. Parser log below (Ctrl+C stops it)."
 echo "-----"
 cd "$ROOT/detector"
 exec env COREPORT="${GATEWAY_LAB:-1}" PYTHONPATH="$ROOT/network" \

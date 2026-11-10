@@ -40,7 +40,7 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
 fi
 SCHEME=http; [ "${TLS:-0}" = "1" ] && SCHEME=https
 cd "$ROOT/dashboard"
-GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:8800" PEER_AGENT="$SCHEME://$P_IP:8800" ATTACKER_IP="$A_IP" \
+GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:${T_AGENT_PORT:-8800}" PEER_AGENT="$SCHEME://$P_IP:${P_AGENT_PORT:-8800}" ATTACKER_IP="$A_IP" \
   bash -c 'HOST="$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
     if [ "${DASH_DEV:-0}" = "1" ]; then exec npm run dev -- -H "$HOST"; fi
     # production build: no development server, no source maps in the browser, live data never cached

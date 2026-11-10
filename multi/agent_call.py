@@ -28,7 +28,7 @@ def main():
     if len(secret) < 16:
         sys.exit("AGENT_SECRET_%s not set in multi/config.env" % who)
     ts, nonce = str(int(time.time())), secrets.token_hex(16)
-    base = "%s://%s:%s" % ("https" if tlsutil.enabled() else "http", c[who + "_IP"], os.environ.get("AGENT_PORT", "8800"))
+    base = "%s://%s:%s" % ("https" if tlsutil.enabled() else "http", c[who + "_IP"], c.get(who + "_AGENT_PORT") or os.environ.get("AGENT_PORT", "8800"))
     hdrs = {"X-Ts": ts, "X-Nonce": nonce, "X-Sig": sig(secret, method, path, ts, nonce, hashlib.sha256(body).hexdigest()), "content-type": "application/json"}
     try:
         code, raw, hdr = tlsutil.request(base, method, path, hdrs, body or None, expect_cn="dualshield-" + ("target" if who == "T" else "peer"),
