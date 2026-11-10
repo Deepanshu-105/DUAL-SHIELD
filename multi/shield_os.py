@@ -310,6 +310,16 @@ def pids_by_cmdline(needles):
     return found
 
 
+def _activity(p, ps):
+    """Grows while the process works: bytes written if the kernel exposes /proc/<pid>/io, else CPU time (weaker signal,
+    used on kernels such as stock WSL2 where psutil has no io_counters)."""
+    if hasattr(p, "io_counters"):
+        io = p.io_counters()
+        return max(io.write_bytes, getattr(io, "write_chars", 0))
+    t = p.cpu_times()
+    return int((t.user + t.system) * 1e6)
+
+
 class WriterTracker:
     """Who is writing a lot right now? Samples every process's cumulative write bytes (psutil) and reports the biggest growth since
     the previous sample. Used when no process is seen holding a file open (Windows ransomware often opens, writes, closes quickly).
@@ -326,10 +336,7 @@ class WriterTracker:
             if _protected_name(p.info.get("name")):
                 continue
             try:
-                io = p.io_counters()
-                # Linux: write_bytes only grows when the kernel flushes to disk (late, and not at all on some WSL/tmpfs paths);
-                # write_chars counts the write() calls themselves, so use whichever is larger. Windows has write_bytes only.
-                cur[p.info["pid"]] = max(io.write_bytes, getattr(io, "write_chars", 0))
+                cur[p.info["pid"]] = _activity(p, ps)
             except Exception:
                 continue
         now = time.time()
