@@ -1,0 +1,389 @@
+diff -ruN a/README_V12.md b/README_V12.md
+--- a/README_V12.md	1970-01-01 00:00:00.000000000 +0000
++++ b/README_V12.md	2026-11-08 13:18:17.000000000 +0000
+@@ -0,0 +1,16 @@
++# Dual-Shield v12 — what changed, and what code still cannot fix
++
++| Limitation | v12 change | How to use / test |
++|---|---|---|
++| Single orderer = single point of failure | `ORDERERS=3` runs 3 Raft orderers (ports 7050/7060/7070, admin 7053/7063/7073). Invoke/deploy fail over to a live orderer. Tested: commits with 3/3 and 2/3 orderers, halts at 1/3, recovers when restarted. | `network.sh reset; ORDERERS=3 network.sh up`; failover test: `network.sh stop-orderer 2` / `start-orderer 2`. Default stays 1. Choose before the first `up` (reset to change). Set `ORDERERS=3` in the environment also when running gateway/status. |
++| Writer-pid guessed from /proc samples | Linux: `shield_os.KernelWriters` uses **fanotify** — the kernel reports the pid of each write. killrule tries it first (`how=kernel-fanotify`), then open-file, then top-writer. Needs root; silently falls back otherwise. `KERNEL_HOOK=0` disables. | `sudo` the guard; tested with real fanotify events. |
++| Guard/listener can be killed or edited | `multi/harden_linux.sh apply` — chattr +i on code/config, systemd units with `Restart=always`. `undo` reverses. | `sudo multi/harden_linux.sh apply --dry-run` first. |
++| Host-level flood | same script: SYN cookies, backlog, rp_filter, per-source SYN hashlimit + connlimit chain `DUALSHIELD_RL`. | env SYN_RATE, SYN_BURST, CONN_MAX, PROTECT_PORTS |
++| Multi-host Fabric | Orderers/peers bind 127.0.0.1 by design; moving them to separate machines means changing the addresses in `configtx.yaml`, `crypto-config.yaml` SANS and the peer/orderer listen env to real IPs. Not automated here (untested = not claimed). | — |
++
++## Still NOT fixable by code (be honest in the viva)
++- **Root / Administrator attacker**: chattr and services can be undone by root; only an external, tamper-evident log (the chain + off-box syslog) makes it detectable, not impossible.
++- **Windows kernel hook**: needs a signed minifilter driver (Microsoft-signed, C, WDK). Windows path still uses polling + open-handle/psutil ranking.
++- **Spoofed / saturating DDoS**: bandwidth floods must be absorbed upstream (ISP, CDN, scrubbing). The local floor only protects the host's own CPU/connection table.
++- **Vault at scale**: git-based vault suits project-sized data; terabytes need a dedicated backup system (object-lock, deduplication).
++- **Real Windows, real ransomware, pilot users**: must be tested on real machines/VMs — nothing in the sandbox substitutes for that.
+diff -ruN a/fabric/deploy/crypto-config.yaml b/fabric/deploy/crypto-config.yaml
+--- a/fabric/deploy/crypto-config.yaml	2026-11-08 13:00:16.000000000 +0000
++++ b/fabric/deploy/crypto-config.yaml	2026-11-08 13:04:56.000000000 +0000
+@@ -5,6 +5,10 @@
+     Specs:
+       - Hostname: orderer
+         SANS: [localhost, 127.0.0.1]
++      - Hostname: orderer2
++        SANS: [localhost, 127.0.0.1]
++      - Hostname: orderer3
++        SANS: [localhost, 127.0.0.1]
+ PeerOrgs:
+   - Name: Org1
+     Domain: org1.example.com
+diff -ruN a/fabric/deploy/network.sh b/fabric/deploy/network.sh
+--- a/fabric/deploy/network.sh	2026-11-08 13:00:16.000000000 +0000
++++ b/fabric/deploy/network.sh	2026-11-08 13:06:11.000000000 +0000
+@@ -1,6 +1,6 @@
+ #!/bin/bash
+ # A complete Hyperledger Fabric network on ONE machine (laptop D) without Docker:
+-#   1 orderer (Raft), 2 peers (Org1 = target side, Org2 = peer side), channel "cityshield", chaincode "cityshield"
++#   1 or 3 orderers (Raft, ORDERERS=3), 2 peers (Org1 = target side, Org2 = peer side), channel "cityshield", chaincode "cityshield"
+ #   (chaincode-as-a-service, a Node process). Everything listens on 127.0.0.1; only the gateway (fabric/gateway) is exposed to the other laptops, over mutual TLS.
+ #
+ #   fabric/deploy/network.sh up        create crypto, start everything, create the channel, deploy + initialise the chaincode
+@@ -12,10 +12,24 @@
+ FAB="$(cd "$(dirname "$0")/.." && pwd)"; DEP="$FAB/deploy"
+ BIN="${FABRIC_BIN:-$FAB/bin}"; NET="${NET_DIR:-$FAB/network}"
+ CC_DIR="$FAB/chaincode/cityshield"; CH=cityshield; CC=cityshield; CC_LABEL=cityshield_1; CC_PORT="${CC_PORT:-9999}"
++ORDERERS="${ORDERERS:-1}"     # v11: 1 (default) or 3 Raft orderers (survives the loss of one); change only on a fresh network (reset first)
+ export PATH="$BIN:$PATH" FABRIC_CFG_PATH="$NET/cfg"
+ C="$NET/crypto"; OR="$C/ordererOrganizations/example.com"; O1="$C/peerOrganizations/org1.example.com"; O2="$C/peerOrganizations/org2.example.com"
+ ORDERER_CA="$OR/orderers/orderer.example.com/tls/ca.crt"
+ 
++ord_name() { [ "$1" = 1 ] && echo orderer || echo "orderer$1"; }          # pid/log name
++ord_host() { [ "$1" = 1 ] && echo orderer.example.com || echo "orderer$1.example.com"; }
++ord_port() { echo $((7050 + ($1 - 1) * 10)); }
++ord_admin() { echo $((7053 + ($1 - 1) * 10)); }
++
++live_orderer() {   # echo "port host" of the first orderer that accepts connections (failover when one is down)
++  local i
++  for i in $(seq 1 "$ORDERERS"); do
++    (exec 3<>/dev/tcp/127.0.0.1/$(ord_port $i)) 2>/dev/null && { echo "$(ord_port $i) $(ord_host $i)"; return; }
++  done
++  echo "7050 orderer.example.com"
++}
++
+ die() { echo "FAIL: $*" >&2; exit 1; }
+ need() { [ -x "$BIN/$1" ] || die "$BIN/$1 missing: run fabric/deploy/install_fabric.sh"; }
+ org_env() {   # org_env 1|2 [admin|User1]: environment for the peer CLI acting as that identity
+@@ -36,6 +50,21 @@
+   cp "$DEP/configtx.yaml" "$NET/configtx.yaml"
+   cp "$FAB/config/core.yaml" "$FAB/config/orderer.yaml" "$NET/cfg/"
+   cp "$DEP/configtx.yaml" "$NET/cfg/"
++  if [ "$ORDERERS" != 1 ] && [ ! -f "$NET/genesis.block" ]; then      # several orderers: rewrite endpoints and Raft consenters
++    python3 - "$NET/configtx.yaml" "$NET/cfg/configtx.yaml" "$ORDERERS" <<'PY'
++import re, sys
++n = int(sys.argv[3])
++ports = [7050 + 10 * i for i in range(n)]
++hosts = ["orderer.example.com"] + ["orderer%d.example.com" % (i + 1) for i in range(1, n)]
++for p in sys.argv[1:3]:
++    t = open(p).read()
++    t = re.sub(r'OrdererEndpoints: \[[^\]]*\]', 'OrdererEndpoints: [%s]' % ", ".join('"127.0.0.1:%d"' % x for x in ports), t)
++    t = re.sub(r'Addresses: \["127.0.0.1:7050"\]', 'Addresses: [%s]' % ", ".join('"127.0.0.1:%d"' % x for x in ports), t)
++    cons = "".join('      - Host: 127.0.0.1\n        Port: %d\n        ClientTLSCert: crypto/ordererOrganizations/example.com/orderers/%s/tls/server.crt\n        ServerTLSCert: crypto/ordererOrganizations/example.com/orderers/%s/tls/server.crt\n' % (x, h, h) for x, h in zip(ports, hosts))
++    t = re.sub(r'(    Consenters:\n)(?:      - Host:.*\n        Port:.*\n        ClientTLSCert:.*\n        ServerTLSCert:.*\n)+', lambda m: m.group(1) + cons, t)
++    open(p, "w").write(t)
++PY
++  fi
+   # register the Chaincode-as-a-Service builder in the peers' core.yaml
+   python3 - "$NET/cfg/core.yaml" "$DEP/ccaas_builder" <<'PY'
+ import re, sys
+@@ -60,19 +89,20 @@
+   [ -f "$NET/genesis.block" ] || (cd "$NET" && FABRIC_CFG_PATH="$NET" configtxgen -profile CityShieldChannel -outputBlock genesis.block -channelID "$CH" >/dev/null 2>&1) || die "configtxgen"
+ }
+ 
+-start_orderer() {
+-  mkdir -p "$NET/orderer"
+-  local T="$OR/orderers/orderer.example.com/tls" M="$OR/orderers/orderer.example.com/msp"
++start_orderer() {  # start_orderer [1|2|3]
++  local i=${1:-1} h port adm; h=$(ord_host $i); port=$(ord_port $i); adm=$(ord_admin $i)
++  mkdir -p "$NET/orderer$i"
++  local T="$OR/orderers/$h/tls" M="$OR/orderers/$h/msp"
+   (
+-    export ORDERER_GENERAL_LISTENADDRESS=127.0.0.1 ORDERER_GENERAL_LISTENPORT=7050 ORDERER_GENERAL_LOCALMSPID=OrdererMSP ORDERER_GENERAL_LOCALMSPDIR="$M"
++    export ORDERER_GENERAL_LISTENADDRESS=127.0.0.1 ORDERER_GENERAL_LISTENPORT=$port ORDERER_GENERAL_LOCALMSPID=OrdererMSP ORDERER_GENERAL_LOCALMSPDIR="$M"
+     export ORDERER_GENERAL_TLS_ENABLED=true ORDERER_GENERAL_TLS_PRIVATEKEY="$T/server.key" ORDERER_GENERAL_TLS_CERTIFICATE="$T/server.crt" ORDERER_GENERAL_TLS_ROOTCAS="[$T/ca.crt]"
+     export ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE="$T/server.crt" ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY="$T/server.key" ORDERER_GENERAL_CLUSTER_ROOTCAS="[$T/ca.crt]"
+     export ORDERER_GENERAL_BOOTSTRAPMETHOD=none ORDERER_CHANNELPARTICIPATION_ENABLED=true
+     export ORDERER_ADMIN_TLS_ENABLED=true ORDERER_ADMIN_TLS_PRIVATEKEY="$T/server.key" ORDERER_ADMIN_TLS_CERTIFICATE="$T/server.crt" ORDERER_ADMIN_TLS_ROOTCAS="[$T/ca.crt]"
+-    export ORDERER_ADMIN_TLS_CLIENTROOTCAS="[$T/ca.crt]" ORDERER_ADMIN_LISTENADDRESS=127.0.0.1:7053
+-    export ORDERER_FILELEDGER_LOCATION="$NET/orderer/ledger" ORDERER_CONSENSUS_WALDIR="$NET/orderer/wal" ORDERER_CONSENSUS_SNAPDIR="$NET/orderer/snap"
+-    export ORDERER_OPERATIONS_LISTENADDRESS=127.0.0.1:8443 ORDERER_GENERAL_GENESISPROFILE=CityShieldChannel
+-    start_proc orderer orderer
++    export ORDERER_ADMIN_TLS_CLIENTROOTCAS="[$T/ca.crt]" ORDERER_ADMIN_LISTENADDRESS=127.0.0.1:$adm
++    export ORDERER_FILELEDGER_LOCATION="$NET/orderer$i/ledger" ORDERER_CONSENSUS_WALDIR="$NET/orderer$i/wal" ORDERER_CONSENSUS_SNAPDIR="$NET/orderer$i/snap"
++    export ORDERER_OPERATIONS_LISTENADDRESS=127.0.0.1:$((8443 + i - 1)) ORDERER_GENERAL_GENESISPROFILE=CityShieldChannel
++    start_proc "$(ord_name $i)" orderer
+   )
+ }
+ start_peer() {  # start_peer 1|2
+@@ -91,10 +121,12 @@
+ }
+ wait_port() { for _ in $(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/$1) 2>/dev/null && return 0; sleep 0.5; done; die "port $1 did not open (see $NET/logs)"; }
+ 
+-join_orderer() {
+-  osnadmin channel list -o 127.0.0.1:7053 --ca-file "$ORDERER_CA" --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" 2>/dev/null | grep -q "\"$CH\"" && return 0
+-  osnadmin channel join --channelID "$CH" --config-block "$NET/genesis.block" -o 127.0.0.1:7053 --ca-file "$ORDERER_CA" \
+-    --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" >/dev/null || die "osnadmin join"
++join_orderer() {  # join_orderer [1|2|3]
++  local i=${1:-1} adm h; adm=$(ord_admin $i); h=$(ord_host $i)
++  local ca="$OR/orderers/$h/tls/ca.crt"
++  osnadmin channel list -o 127.0.0.1:$adm --ca-file "$ca" --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" 2>/dev/null | grep -q "\"$CH\"" && return 0
++  osnadmin channel join --channelID "$CH" --config-block "$NET/genesis.block" -o 127.0.0.1:$adm --ca-file "$ca" \
++    --client-cert "$OR/users/Admin@example.com/tls/client.crt" --client-key "$OR/users/Admin@example.com/tls/client.key" >/dev/null || die "osnadmin join (orderer $i)"
+ }
+ join_peers() {
+   for n in 1 2; do
+@@ -126,7 +158,7 @@
+   start_cc
+   org_env 1
+   peer lifecycle chaincode querycommitted --channelID "$CH" --name "$CC" 2>/dev/null | grep -q "Version: 1.0" && return 0   # restart of an existing network
+-  local ord=(-o 127.0.0.1:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA")
++  local lo; lo=($(live_orderer)); local ord=(-o 127.0.0.1:${lo[0]} --ordererTLSHostnameOverride ${lo[1]} --tls --cafile "$ORDERER_CA")
+   for n in 1 2; do
+     org_env $n
+     peer lifecycle chaincode approveformyorg "${ord[@]}" --channelID "$CH" --name "$CC" --version 1.0 --package-id "$id" --sequence 1 \
+@@ -142,7 +174,7 @@
+ }
+ invoke() {  # invoke <json> : as Org1 Admin, endorsed by both orgs
+   org_env 1
+-  peer chaincode invoke -o 127.0.0.1:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C "$CH" -n "$CC" -c "$1" --waitForEvent \
++  local lo; lo=($(live_orderer)); peer chaincode invoke -o 127.0.0.1:${lo[0]} --ordererTLSHostnameOverride ${lo[1]} --tls --cafile "$ORDERER_CA" -C "$CH" -n "$CC" -c "$1" --waitForEvent \
+     --peerAddresses 127.0.0.1:7051 --tlsRootCertFiles "$O1/peers/peer0.org1.example.com/tls/ca.crt" \
+     --peerAddresses 127.0.0.1:9051 --tlsRootCertFiles "$O2/peers/peer0.org2.example.com/tls/ca.crt" 2>&1
+ }
+@@ -151,9 +183,13 @@
+ up() {
+   need peer; need orderer; need configtxgen; need cryptogen; need osnadmin
+   gen_crypto
+-  [ -f "$NET/pids/orderer.pid" ] && kill -0 "$(cat "$NET/pids/orderer.pid")" 2>/dev/null || start_orderer
+-  wait_port 7050; wait_port 7053
+-  join_orderer
++  for i in $(seq 1 "$ORDERERS"); do
++    n=$(ord_name $i)
++    { [ -f "$NET/pids/$n.pid" ] && kill -0 "$(cat "$NET/pids/$n.pid")" 2>/dev/null; } || start_orderer $i
++  done
++  for i in $(seq 1 "$ORDERERS"); do wait_port "$(ord_port $i)"; wait_port "$(ord_admin $i)"; done
++  for i in $(seq 1 "$ORDERERS"); do join_orderer $i; done
++  [ "$ORDERERS" -gt 1 ] && sleep 4          # Raft election
+   [ -f "$NET/pids/peer1.pid" ] && kill -0 "$(cat "$NET/pids/peer1.pid")" 2>/dev/null || start_peer 1
+   [ -f "$NET/pids/peer2.pid" ] && kill -0 "$(cat "$NET/pids/peer2.pid")" 2>/dev/null || start_peer 2
+   wait_port 7051; wait_port 9051
+@@ -169,7 +205,8 @@
+   pkill -f "fabric-chaincode-node server" 2>/dev/null; echo FABRIC_DOWN
+ }
+ status() {
+-  for f in orderer peer1 peer2 chaincode; do
++  for f in orderer orderer2 orderer3 peer1 peer2 chaincode; do
++    [ -f "$NET/pids/$f.pid" ] || continue
+     if [ -f "$NET/pids/$f.pid" ] && kill -0 "$(cat "$NET/pids/$f.pid")" 2>/dev/null; then echo "$f: running"; else echo "$f: stopped"; fi
+   done
+   query '{"function":"params","Args":[]}' 2>&1 | tail -1
+@@ -181,5 +218,7 @@
+   status) status ;;
+   invoke) invoke "$2" ;;
+   query) query "$2" ;;
+-  *) echo "usage: $0 up|down|reset|status"; exit 1 ;;
++  stop-orderer) kill "$(cat "$NET/pids/$(ord_name "${2:-1}").pid")" && echo "orderer ${2:-1} stopped" ;;      # for failover tests
++  start-orderer) start_orderer "${2:-1}" && echo "orderer ${2:-1} started" ;;
++  *) echo "usage: $0 up|down|reset|status|stop-orderer N|start-orderer N"; exit 1 ;;
+ esac
+diff -ruN a/multi/harden_linux.sh b/multi/harden_linux.sh
+--- a/multi/harden_linux.sh	1970-01-01 00:00:00.000000000 +0000
++++ b/multi/harden_linux.sh	2026-11-08 13:16:06.000000000 +0000
+@@ -0,0 +1,66 @@
++#!/usr/bin/env bash
++# Dual-Shield host hardening for Linux (run as root).  ./harden_linux.sh [apply|undo|status] [--dry-run]
++#   1) DDoS floor on THIS host: SYN cookies, bigger backlog, rp_filter, per-source connection / SYN-rate limits (own chain DUALSHIELD_RL)
++#   2) tamper resistance: code + config made immutable (chattr +i) so even a root-owned script cannot silently edit them,
++#      and systemd units with Restart=always so killing the guard/listener restarts it within seconds
++# Honest limit: root can still `chattr -i`, unload rules or stop systemd. This raises the cost and makes tampering LOUD (it
++# needs an extra privileged step that auditd / the chain can log); it does not make a rooted host trustworthy.
++set -u
++ACT="${1:-status}"; DRY=0; [ "${2:-}" = "--dry-run" ] || [ "${1:-}" = "--dry-run" ] && DRY=1
++[ "$ACT" = "--dry-run" ] && ACT=status
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++SYN_RATE="${SYN_RATE:-50/second}"; SYN_BURST="${SYN_BURST:-100}"; CONN_MAX="${CONN_MAX:-100}"
++PORTS="${PROTECT_PORTS:-22,80,443,8600}"
++UNITDIR="${UNITDIR:-/etc/systemd/system}"
++run() { if [ "$DRY" = 1 ]; then echo "DRY: $*"; else "$@" 2>/dev/null || echo "  (failed: $*)"; fi; }
++[ "$DRY" = 0 ] && [ "$(id -u)" != 0 ] && { echo "run as root (or use --dry-run)"; exit 1; }
++
++unit() {  # unit <name> <exec> <workdir>
++  local f="$UNITDIR/dualshield-$1.service"
++  local body="[Unit]
++Description=Dual-Shield $1
++After=network.target
++[Service]
++WorkingDirectory=$3
++EnvironmentFile=-$ROOT/multi/config.env
++ExecStart=$2
++Restart=always
++RestartSec=2
++NoNewPrivileges=true
++[Install]
++WantedBy=multi-user.target"
++  if [ "$DRY" = 1 ]; then echo "DRY: write $f"; else printf '%s\n' "$body" > "$f"; fi
++}
++
++apply() {
++  echo "== DDoS floor"
++  run sysctl -w net.ipv4.tcp_syncookies=1 net.ipv4.tcp_max_syn_backlog=4096 net.ipv4.conf.all.rp_filter=1 net.ipv4.icmp_ignore_bogus_error_responses=1 net.core.somaxconn=4096
++  run iptables -N DUALSHIELD_RL
++  run iptables -F DUALSHIELD_RL
++  run iptables -A DUALSHIELD_RL -p tcp --syn -m hashlimit --hashlimit-name ds_syn --hashlimit-mode srcip --hashlimit-above "$SYN_RATE" --hashlimit-burst "$SYN_BURST" -j DROP
++  run iptables -A DUALSHIELD_RL -p tcp -m multiport --dports "$PORTS" -m connlimit --connlimit-above "$CONN_MAX" --connlimit-mask 32 -j REJECT --reject-with tcp-reset
++  run iptables -A DUALSHIELD_RL -j RETURN
++  iptables -C INPUT -j DUALSHIELD_RL 2>/dev/null || run iptables -I INPUT 1 -j DUALSHIELD_RL
++  echo "== tamper resistance"
++  for f in "$ROOT"/detector/*.py "$ROOT"/network/*.py "$ROOT"/ransomware/*.py "$ROOT"/multi/*.py "$ROOT"/multi/*.sh "$ROOT/multi/config.env"; do
++    [ -f "$f" ] && run chattr +i "$f"
++  done
++  unit guard "$(command -v python3 || echo /usr/bin/python3) $ROOT/ransomware/guard.py" "$ROOT/ransomware"
++  unit listener "$(command -v python3 || echo /usr/bin/python3) $ROOT/network/listener.py" "$ROOT"
++  unit ssh-parser "$(command -v python3 || echo /usr/bin/python3) $ROOT/detector/ssh_parser.py" "$ROOT"
++  run systemctl daemon-reload
++  for s in guard listener ssh-parser; do run systemctl enable --now dualshield-$s; done
++  echo "done. To edit code later:  $0 undo"
++}
++undo() {
++  for f in "$ROOT"/detector/*.py "$ROOT"/network/*.py "$ROOT"/ransomware/*.py "$ROOT"/multi/*.py "$ROOT"/multi/*.sh "$ROOT/multi/config.env"; do [ -f "$f" ] && run chattr -i "$f"; done
++  run iptables -D INPUT -j DUALSHIELD_RL; run iptables -F DUALSHIELD_RL; run iptables -X DUALSHIELD_RL
++  for s in guard listener ssh-parser; do run systemctl disable --now dualshield-$s; run rm -f "$UNITDIR/dualshield-$s.service"; done
++  echo "undone"
++}
++status() {
++  iptables -S DUALSHIELD_RL 2>/dev/null | head -5 || echo "no DDoS chain"
++  lsattr "$ROOT/multi/config.env" 2>/dev/null
++  systemctl is-active dualshield-guard dualshield-listener dualshield-ssh-parser 2>/dev/null
++}
++case "$ACT" in apply) apply ;; undo) undo ;; status) status ;; *) echo "usage: $0 apply|undo|status [--dry-run]"; exit 1 ;; esac
+diff -ruN a/multi/shield_os.py b/multi/shield_os.py
+--- a/multi/shield_os.py	2026-11-08 13:00:18.000000000 +0000
++++ b/multi/shield_os.py	2026-11-08 13:15:45.000000000 +0000
+@@ -410,3 +410,70 @@
+ def powershell(script, timeout=60):
+     r = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=timeout)
+     return r.returncode, r.stdout, r.stderr
++
++
++class KernelWriters:
++    """Linux only: the KERNEL tells us which pid wrote to a file (fanotify). Precise, unlike sampling /proc.
++    Needs root (CAP_SYS_ADMIN) and a kernel with fanotify; otherwise .ok is False and killrule keeps using the
++    open-file / top-writer fallbacks. Marks the whole mount that holds `path` and keeps only events under `path`."""
++    FAN_MODIFY, FAN_CLOSE_WRITE, FAN_MARK_ADD, FAN_MARK_MOUNT = 0x2, 0x8, 0x1, 0x10
++    FAN_CLOEXEC, FAN_NONBLOCK = 0x1, 0x2
++    META = "=IBBHQii"                                  # event_len, vers, reserved, metadata_len, mask, fd, pid
++
++    def __init__(self, path):
++        self.ok, self.pids, self.root = False, {}, os.path.realpath(path)
++        self._lock = None
++        if IS_WIN or not sys.platform.startswith("linux"):
++            return
++        try:
++            import ctypes, struct, threading
++            self._struct, self._ct = struct, ctypes
++            libc = ctypes.CDLL(None, use_errno=True)
++            fd = libc.fanotify_init(self.FAN_CLOEXEC | self.FAN_NONBLOCK, os.O_RDONLY | getattr(os, "O_LARGEFILE", 0))
++            if fd < 0:
++                return
++            r = libc.fanotify_mark(fd, self.FAN_MARK_ADD | self.FAN_MARK_MOUNT, ctypes.c_ulonglong(self.FAN_MODIFY | self.FAN_CLOSE_WRITE),
++                                   -100, self.root.encode())
++            if r < 0:
++                os.close(fd)
++                return
++            self.fd, self._lock, self.ok = fd, threading.Lock(), True
++            threading.Thread(target=self._loop, daemon=True).start()
++        except Exception:
++            self.ok = False
++
++    def _loop(self):
++        import select
++        size = self._struct.calcsize(self.META)
++        me = os.getpid()
++        while True:
++            try:
++                select.select([self.fd], [], [], 1.0)
++                buf = os.read(self.fd, 65536)
++            except BlockingIOError:
++                continue
++            except Exception:
++                return
++            off = 0
++            while off + size <= len(buf):
++                ln, _v, _r, _ml, mask, efd, pid = self._struct.unpack_from(self.META, buf, off)
++                if efd >= 0:
++                    try:
++                        p = os.readlink("/proc/self/fd/%d" % efd)
++                    except Exception:
++                        p = ""
++                    os.close(efd)
++                    if pid != me and p.startswith(self.root):
++                        with self._lock:
++                            self.pids[pid] = time.time()
++                off += ln or size
++
++    def writers(self, within=10.0):
++        """pids that wrote under the watched folder in the last `within` seconds, most recent first."""
++        if not self.ok:
++            return []
++        now = time.time()
++        with self._lock:
++            for p in [p for p, t in self.pids.items() if now - t > 60]:
++                del self.pids[p]
++            return [p for p, t in sorted(self.pids.items(), key=lambda x: -x[1]) if now - t <= within]
+diff -ruN a/multi/test_v12.py b/multi/test_v12.py
+--- a/multi/test_v12.py	1970-01-01 00:00:00.000000000 +0000
++++ b/multi/test_v12.py	2026-11-08 13:16:16.000000000 +0000
+@@ -0,0 +1,28 @@
++#!/usr/bin/env python3
++"""v12 checks: fanotify kernel writer hook (skipped, not failed, when not root/unsupported), hardening script dry-run, killrule uses kernel pids."""
++import os, subprocess, sys, tempfile, time
++HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
++import shield_os
++ok = True
++def check(name, cond):
++    global ok; print(("PASS " if cond else "FAIL ") + name); ok &= bool(cond)
++
++d = tempfile.mkdtemp()
++k = shield_os.KernelWriters(d)
++if k.ok:
++    p = subprocess.Popen(["sh", "-c", "echo x > %s/a.txt; sleep 1" % d]); time.sleep(0.7)
++    check("fanotify reports the writing pid", p.pid in k.writers())
++    check("own process is not reported", os.getpid() not in k.writers())
++    p.wait()
++else:
++    print("SKIP fanotify (needs root + kernel support)")
++
++r = subprocess.run(["bash", os.path.join(HERE, "harden_linux.sh"), "apply", "--dry-run"], capture_output=True, text=True)
++check("harden dry-run exits 0", r.returncode == 0)
++check("harden: syn cookies + hashlimit + connlimit", all(s in r.stdout for s in ("tcp_syncookies=1", "hashlimit", "connlimit")))
++check("harden: chattr +i and Restart units", "chattr +i" in r.stdout and "dualshield-guard.service" in r.stdout)
++unit = subprocess.run(["bash", "-c", "UNITDIR=%s bash %s apply --dry-run" % (d, os.path.join(HERE, "harden_linux.sh"))], capture_output=True, text=True)
++check("harden dry-run writes nothing", not [f for f in os.listdir(d) if f.endswith(".service")])
++src = open(os.path.join(HERE, "..", "ransomware", "killrule.py")).read()
++check("killrule prefers kernel-fanotify pids", "kernel-fanotify" in src and "KERNEL_HOOK" in src)
++print("ALL PASS" if ok else "SOME FAILED"); sys.exit(0 if ok else 1)
+diff -ruN a/ransomware/killrule.py b/ransomware/killrule.py
+--- a/ransomware/killrule.py	2026-11-08 13:00:16.000000000 +0000
++++ b/ransomware/killrule.py	2026-11-08 13:15:45.000000000 +0000
+@@ -40,6 +40,7 @@
+         self.suspects = set()                     # writers seen at earlier flags
+         self.cooldown_until = 0.0
+         self.safe = _ancestors()
++        self.kernel = shield_os.KernelWriters(watch_dir) if os.environ.get("KERNEL_HOOK", "1") == "1" else None   # fanotify: kernel-reported writer pids (Linux, root)
+         self.writers = shield_os.WriterTracker()   # who writes most right now (used when no open file is seen)
+         self.heavy = []
+ 
+@@ -65,7 +66,8 @@
+ 
+         t_trigger = time.time()
+         print("%.6f KILL_TRIGGER distinct_files=%d" % (t_trigger, len(self.recent)), flush=True)
+-        targets, how = self.suspects & self._alive(self.suspects), "open-file"
++        kw = {p for p in (self.kernel.writers() if self.kernel and self.kernel.ok else []) if p not in self.safe and self._alive([p])}
++        targets, how = (kw, "kernel-fanotify") if kw else (self.suspects & self._alive(self.suspects), "open-file")
+         if not targets:
+             targets, how = {p for p in self.heavy if self._alive([p])}, "top-writer"
+         if not targets:

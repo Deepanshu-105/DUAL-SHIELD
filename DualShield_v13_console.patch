@@ -1,0 +1,1393 @@
+diff -ruN b2/README_V13.md new/README_V13.md
+--- b2/README_V13.md	1970-01-01 00:00:00.000000000 +0000
++++ new/README_V13.md	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,31 @@
++# Dual-Shield v13 — secure Admin Console
++
++## What changed
++| Area | v12 | v13 |
++|---|---|---|
++| Login | HTTP Basic prompt, one password | Login page, signed session cookie (HttpOnly, SameSite=Strict, Secure under TLS), 30 min idle / 8 h hard limit, logout revokes the session |
++| Roles | one | **admin** (`DASH_PASS`) and read-only **viewer** (`DASH_VIEW_PASS`, ideal for the evaluator) |
++| Brute force | none | lockout 5 tries → 30 s doubling to 15 min, global counter, constant-time compare, fixed delay |
++| CSRF / cross-site | custom header on two routes | every state change: admin role + same-origin + `x-ds-confirm`, enforced in the proxy AND again in each route |
++| Browser hardening | none | CSP (no framing, no foreign scripts/forms, `base-uri none`), nosniff, no-referrer, COOP/CORP, HSTS under TLS, `no-store` on API |
++| Audit | none | hash-chained log `multi/logs/dashboard_audit.jsonl` (login, fail, lock, refusal, rollback, recovery, governance, demo); tamper check in the UI |
++| Input | — | IP / node id / numbers validated on the server before they reach the chain |
++| Offline | Google web fonts fetched at build | system fonts only; nothing fetched from the internet |
++| Dev server | `npm run dev` (source maps, eval) | production build + `next start` (`DASH_DEV=1` for the old way); live API data can never be cached |
++| UI | one page | Admin Console: Overview, Layer 1, Consensus & Chain, Governance (propose/sign), Layer 2 (start mock ransomware, roll back, recover, unfreeze), Security posture, Audit log |
++
++Slashed vs not-yet-registered nodes are now shown differently (the old page compared a number with `0n`, so slashing never showed).
++
++## Use
++1. `multi/gen_secrets.sh` → put `DASH_PASS`, `DASH_VIEW_PASS`, `DASH_SESSION_KEY` in `multi/config.env`.
++2. `multi/start_D.sh` (builds the dashboard first, takes a minute) → open the page, sign in.
++3. Give the evaluator `DASH_VIEW_PASS`; you keep the administrator password.
++4. `DEMO_MODE=0` hides the demo-ransomware button for a real deployment.
++Test: `cd dashboard && npm run build && python3 test_security.py` (19 checks).
++
++## Honest limits
++- Over plain HTTP the password and cookie cross the network in clear text: use `TLS=1` (https://D:3443) for anything beyond a closed lab. Cookie is `Secure` only under TLS.
++- CSP still allows inline scripts (`'unsafe-inline'`), required by this Next.js setup without a nonce rework; it blocks foreign scripts, framing and form hijack, not injected inline script. React escapes all data, so no HTML is built from server data.
++- Behind the built-in TLS proxy all clients look like one address, so lockout is global: someone who guesses wrong repeatedly can lock the login screen for others (an already signed-in session keeps working). Put a real reverse proxy with `DASH_TRUST_PROXY=1` for per-client lockout.
++- Passwords live in `multi/config.env`; anyone with root on D can read them or the audit log. The audit chain detects edits, it cannot stop root deleting the whole file.
++- Two roles share one process: this is not multi-user accounts with individual identities.
+diff -ruN b2/dashboard/app/AdminConsole.jsx new/dashboard/app/AdminConsole.jsx
+--- b2/dashboard/app/AdminConsole.jsx	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/AdminConsole.jsx	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,208 @@
++"use client";
++import { useCallback, useEffect, useState } from "react";
++
++const TABS = [["overview", "Overview"], ["l1", "Layer 1 · Network"], ["chain", "Consensus & Chain"], ["gov", "Governance"], ["l2", "Layer 2 · Ransomware"], ["sec", "Security posture"], ["audit", "Audit log"]];
++const TYPES = { crypto: "Encrypting ransomware", wiper: "Wiper (destroys data)", double_extortion: "Double extortion", exfiltration: "Data theft", note_only: "Ransom note only" };
++const WARM = "203.0.113.1";
++
++function usePoll(url, ms, enabled = true) {
++  const [d, setD] = useState(null);
++  useEffect(() => {
++    if (!enabled) return;
++    let alive = true;
++    const go = async () => {
++      try {
++        const r = await fetch(url, { cache: "no-store" });
++        if (r.status === 401) { window.location.href = "/login"; return; }
++        const j = await r.json(); if (alive) setD(j);
++      } catch {}
++    };
++    go(); const id = setInterval(go, ms);
++    return () => { alive = false; clearInterval(id); };
++  }, [url, ms, enabled]);
++  return d;
++}
++const age = (s) => (s == null ? "n/a" : s < 90 ? Math.round(s) + " s ago" : Math.round(s / 60) + " min ago");
++const fmt = (v) => (v == null ? "waiting…" : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v + " ms");
++const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString();
++
++const Tile = ({ label, value, note, tone }) => (
++  <div className={"card tile " + (tone || "")}><h3>{label}</h3><div className="big">{value}</div>{note && <div className="note">{note}</div>}</div>
++);
++const Explain = ({ title, children }) => (<div className="explain"><b>{title}</b><br />{children}</div>);
++
++export default function AdminConsole() {
++  const [tab, setTab] = useState("overview");
++  const [toast, setToast] = useState(null);
++  const [busy, setBusy] = useState("");
++  const me = usePoll("/api/auth/me", 15000);
++  const admin = me && me.role === "admin";
++  const chain = usePoll("/api/chain", 2000);
++  const det = usePoll("/api/detector", 1500);
++  const blk = usePoll("/api/blocked", 2000);
++  const tl = usePoll("/api/timeline", 2000);
++  const live = usePoll("/api/live", 2000);
++  const rec = usePoll("/api/recovery", 2500);
++  const peers = usePoll("/api/peers", 5000);
++  const adm = usePoll("/api/admin/chain", 3000, tab === "chain" || tab === "gov");
++  const aud = usePoll("/api/audit", 4000, tab === "audit" && admin);
++  const [rbOut, setRbOut] = useState(null);
++
++  useEffect(() => { if (toast) { const id = setTimeout(() => setToast(null), 9000); return () => clearTimeout(id); } }, [toast]);
++
++  const post = useCallback(async (url, body, ask, tag) => {
++    if (ask && !window.confirm(ask)) return null;
++    setBusy(tag || url);
++    try {
++      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" }, body: JSON.stringify(body || {}) });
++      if (r.status === 401) { window.location.href = "/login"; return null; }
++      const j = await r.json(); setBusy(""); return j;
++    } catch (e) { setBusy(""); return { ok: false, error: String(e) }; }
++  }, []);
++  const logout = async () => { await post("/api/auth/logout", {}); window.location.href = "/login"; };
++
++  const confirmed = chain && chain.confirmed, killed = det && det.kills > 0;
++  const nodeTone = (n) => (n.slashed ? "#b91c1c" : n.stake === 0 ? "#475569" : n.reported && confirmed ? "#0369a1" : n.reported ? "#b45309" : "#15803d");
++  const nodeLabel = (n) => (n.slashed ? "slashed (stake lost)" : n.stake === 0 ? "not registered yet" : n.reported && confirmed ? "took part in consensus" : n.reported ? "reported" : "protected");
++  const timeline = Array.isArray(tl) ? tl : [];
++  const tNode = blk && blk.target, pNode = blk && blk.peer;
++  const l2 = !rec || !rec.available ? [] : [
++    { label: "Vault", value: rec.frozen ? "FROZEN" : "protecting", note: rec.frozen ? (rec.freeze && rec.freeze.reason) || "attack suspected" : rec.commits + " snapshots", tone: rec.frozen ? "bad" : "ok" },
++    { label: "Last snapshot", value: rec.last_commit ? age(rec.last_commit.age_s) : "none", note: rec.last_commit ? "rev " + rec.last_commit.rev : "" },
++    { label: "Guard", value: rec.guard_alive ? "running" : "stopped", note: rec.guard ? "kill " + (rec.guard.kill ? "on" : "off") + ", held files " + rec.guard.held : "", tone: rec.guard_alive ? "ok" : "bad" },
++    { label: "Containment", value: rec.containment ? String(rec.containment.mode).toUpperCase() : "idle", note: rec.containment ? rec.containment.reason : "no attack seen", tone: rec.containment ? "warn" : "" },
++    { label: "Attack type", value: rec.classification && rec.classification.primary ? TYPES[rec.classification.primary] || rec.classification.primary : "none seen" },
++    { label: "Self-protection", value: rec.selfguard ? (rec.selfguard.ok ? "OK" : "ALERT") : "not running", tone: rec.selfguard && !rec.selfguard.ok ? "bad" : "" },
++    { label: "Last recovery", value: rec.recovery ? (rec.recovery.ok ? "OK" : "FAILED") : "none yet", note: rec.recovery && rec.recovery.ok ? rec.recovery.files + " files, " + rec.recovery.ms + " ms" : "", tone: rec.recovery ? (rec.recovery.ok ? "ok" : "bad") : "" },
++  ];
++
++  async function runRansomware() { const j = await post("/api/admin/demo", { action: "ransomware" }, "Start the MOCK ransomware on the target (it only touches the sample folder)?", "demo"); if (j) setToast(j.output || j.error || JSON.stringify(j)); }
++  async function rollback() { const j = await post("/api/rollback", {}, "Restore the protected folder from the clean snapshot? The chain check runs first.", "rb"); if (j) { setRbOut(j); setToast(j.ok ? "Rollback OK" : "Rollback: " + (j.output || j.error)); } }
++  async function recovery(a) { const j = await post("/api/recovery", { action: a }, a === "recover" ? "Recover from the newest verified vault snapshot? The encrypted folder is kept as evidence." : "Unfreeze the vault and restart the guard? Only after recovery, on a clean machine.", a); if (j) { setRbOut(j); setToast((j.ok ? "OK: " : "Failed: ") + (j.output || j.error || "")); } }
++  const [form, setForm] = useState({ kind: "2", ip: "", node: "", value: "" });
++  async function propose(e) { e.preventDefault(); const j = await post("/api/admin/chain", { action: "propose", ...form }, "Submit this proposal to the chain?", "prop"); if (j) setToast(j.ok ? "Proposal submitted: " + JSON.stringify(j.result) : "Refused: " + j.error); }
++  async function approve(id) { const j = await post("/api/admin/chain", { action: "approve", id }, "Sign proposal " + id + " as governor?", "ap" + id); if (j) setToast(j.ok ? "Signed proposal " + id : "Refused: " + j.error); }
++
++  const Timeline = ({ layer }) => (
++    <div className="list">{timeline.filter((x) => !layer || x.layer === layer).slice(0, 12).map((x, i) => (
++      <div className="row" key={i}><span className="t">{hhmm(x.ts)}</span><span className={"pill " + (x.layer === 1 ? "info" : "warn")}>L{x.layer}</span><span>{x.text}</span></div>))}
++      {!timeline.length && <div className="note">No events yet.</div>}</div>
++  );
++  const Chips = ({ list }) => list === null || list === undefined ? <span className="note">not reachable</span> : (list.filter((i) => i !== WARM).length ? list.filter((i) => i !== WARM).map((ip) => <span className="pill bad mono" style={{ margin: 2 }} key={ip}>{ip}</span>) : <span className="note">empty</span>);
++
++  return (
++    <div className="shell">
++      <nav className="side" aria-label="Sections">
++        <h2>🛡 Dual-Shield</h2>
++        {TABS.filter(([k]) => k !== "audit" || admin).map(([k, l]) => <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{l}</button>)}
++        <div className="spacer" />
++        <div className="who">Signed in as <b>{me ? me.role : "…"}</b>{me && <><br />session ends in {Math.ceil(me.expiresIn / 60)} min of inactivity</>}</div>
++        <button className="tab" onClick={logout}>Sign out</button>
++      </nav>
++      <main className="main">
++        <div className="head">
++          <h1>{TABS.find(([k]) => k === tab)[1]}</h1>
++          <span className={"pill " + (chain && chain.status === "live" ? "ok" : "bad")}>{chain && chain.status === "live" ? "Fabric chain live" : "chain: " + (chain ? chain.status : "connecting…")}</span>
++          <span className={"pill " + (confirmed ? "bad" : "ok")}>Layer 1: {confirmed ? "THREAT CONFIRMED" : "monitoring"}</span>
++          <span className={"pill " + (killed ? "bad" : "ok")}>Layer 2: {killed ? "ATTACK STOPPED" : "monitoring"}</span>
++          {!admin && me && <span className="pill mut">read-only</span>}
++        </div>
++
++        {tab === "overview" && <>
++          <Explain title="What you are looking at">Layer 1 stops network attacks (SSH guessing, floods, scans, spoofing) on the target, and shares each confirmed attacker through a Hyperledger Fabric chain so the peer blocks it too once <b>K nodes agree</b>. Layer 2 stops ransomware on the machine, kills the process, and restores the files from a verified vault. Use the tabs to see and operate each part.</Explain>
++          <div className="grid">
++            <Tile label="Consensus needed (K)" value={chain && chain.k != null ? chain.k : "…"} note={chain ? chain.n + " staked nodes" : ""} />
++            <Tile label="Latest attacker" value={chain && chain.ip ? chain.ip : "none"} note={chain && chain.ip ? chain.count + " of " + chain.k + " reports" : "waiting for an attack"} tone={confirmed ? "bad" : ""} />
++            <Tile label="Blocked on target" value={tNode ? tNode.filter((i) => i !== WARM).length : "n/a"} note="Layer 1 firewall set" />
++            <Tile label="Blocked on peer" value={pNode ? pNode.filter((i) => i !== WARM).length : "n/a"} note="learned from the chain" />
++            <Tile label="Files flagged / kills" value={det ? det.flagged + " / " + det.kills : "…"} note="Layer 2 kill rule" tone={killed ? "bad" : ""} />
++            <Tile label="Vault" value={rec && rec.available ? (rec.frozen ? "FROZEN" : "protecting") : "n/a"} note={rec && rec.available ? rec.commits + " snapshots" : ""} tone={rec && rec.frozen ? "bad" : "ok"} />
++          </div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>NODES</h3>
++          <div className="grid">{chain && chain.nodes && chain.nodes.map((n, i) => (
++            <div className="node" style={{ background: nodeTone(n) }} key={n.addr}><b>{["Node A (target, Org1)", "Node B (peer, Org2)", "Node C (Org1)"][i]}</b><div>{nodeLabel(n)}</div><div className="mono">stake {n.stake} · {n.addr.split("@")[0]}</div></div>))}</div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>LATEST EVENTS</h3><Timeline />
++        </>}
++
++        {tab === "l1" && <>
++          <Explain title="Layer 1 · what is implemented">SSH parser (failed logins → block in ms) · slow brute force / password spraying / stolen-credential login · SYN, UDP and connection floods, port scans · ARP spoofing · sensor-data spoofing · Tor and bad-HASSH fingerprints · IPv4 + IPv6 · Linux (ipset/iptables) and Windows (firewall rules). <b>Try it:</b> run the attacker menu on laptop A and watch the lists and timeline below fill in.</Explain>
++          <div className="grid">
++            <Tile label="Local block on target" value={live && live.multi ? fmt(live.dropMs) : "n/a"} note="log line → firewall, laptop T" />
++            <Tile label="Peer blocked after target" value={live && live.multi ? (live.clockWarning ? "clocks differ" : fmt(live.peerMs)) : "n/a"} note="T → chain → P" />
++            <Tile label="Flood / scan blocks" value={live && live.multi ? live.floods : "n/a"} note={live && live.lastFlood ? live.lastFlood.kind + " from " + live.lastFlood.ip : "enable FLOOD=1"} />
++            <Tile label="Slow-login / ARP / sensor alerts" value={live && live.others ? live.others.login + " / " + live.others.arp + " / " + live.others.sensor : "n/a"} note="login_watch, arp_watch, sensor_guard" />
++          </div>
++          <div className="grid two" style={{ marginTop: 12 }}>
++            <div className="card"><h3>Blocked on target (T)</h3><Chips list={tNode} /></div>
++            <div className="card"><h3>Blocked on peer (P)</h3><Chips list={pNode} /></div>
++          </div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>LAYER 1 TIMELINE</h3><Timeline layer={1} />
++        </>}
++
++        {tab === "chain" && <>
++          <Explain title="Why a blockchain here">One laptop saying "this IP is an attacker" can be wrong or hacked. The chain only turns a report into a <b>confirmed threat after K different staked nodes report it</b>. A node that reported something later overruled loses its stake (slashing). Fabric makes this a permissioned ledger: no coins, no gas.</Explain>
++          <div className="grid">
++            <Tile label="K (reports needed)" value={adm && adm.params ? adm.params.required : "…"} note={adm && adm.params ? "stake per node " + adm.params.STAKE + ", window " + adm.params.WINDOW + " s" : ""} />
++            <Tile label="Staked nodes" value={adm && adm.params ? adm.params.nodeCount : "…"} />
++            <Tile label="Slashed pool" value={adm && adm.params ? adm.params.slashedPool : "…"} note="stake forfeited by bad reporters" />
++          </div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>THREAT TALLIES</h3>
++          <div className="list">{adm && adm.tallies && adm.tallies.length ? adm.tallies.map((t) => <div className="row" key={t.ip}><span className="mono">{t.ip}</span><span>{t.count}/{t.k} reports</span><span className={"pill " + (t.confirmed ? "bad" : "warn")}>{t.confirmed ? "CONFIRMED" : "pending"}</span>{t.active === false && t.confirmed && <span className="pill mut">overruled</span>}</div>) : <div className="note">No reports yet.</div>}</div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>NODES</h3>
++          <div className="list">{adm && adm.nodes && adm.nodes.map((n) => <div className="row" key={n.addr}><span className="mono">{n.addr}</span><span className={"pill " + (n.stake > 0 ? "ok" : "bad")}>{n.stake > 0 ? "staked " + n.stake : n.approved ? "not registered" : "not approved"}</span>{n.governor && <span className="pill info">governor</span>}</div>)}</div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>LEDGER EVENTS (newest first)</h3>
++          <div className="list">{adm && adm.events && adm.events.slice(0, 15).map((e, i) => <div className="row mono" key={i}>{e.name} {e.ip ? e.ip : ""} {e.node ? e.node.split("@")[0] : ""} {e.count != null ? "(" + e.count + ")" : ""}</div>)}</div>
++        </>}
++
++        {tab === "gov" && <>
++          <Explain title="Governance (administrator)">Rules of the network are changed by <b>proposals</b>, not by editing files: protect an IP so it can never be blocked, overrule a wrong threat (slashes the nodes that reported it), approve or revoke a node, change K-related parameters. A proposal runs when enough governors sign. Every action here is audited.</Explain>
++          <div className="card"><h3>New proposal</h3>
++            <form className="form" onSubmit={propose}>
++              <label>What<select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{adm && adm.kinds && Object.entries(adm.kinds).map(([k, v]) => <option key={k} value={k}>{k} · {v}</option>)}</select></label>
++              {["1", "2", "3"].includes(form.kind) && <label>IP address<input value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })} placeholder="203.0.113.50" maxLength={45} /></label>}
++              {["4", "5", "6", "7"].includes(form.kind) && <label>Node id<input value={form.node} onChange={(e) => setForm({ ...form, node: e.target.value })} placeholder="Org1MSP:User1@org1.example.com" maxLength={100} /></label>}
++              {["8", "9", "10"].includes(form.kind) && <label>Value<input value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} inputMode="numeric" maxLength={4} /></label>}
++              <button className="btn" disabled={!admin || busy === "prop"}>Submit proposal</button>
++            </form></div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>PROPOSALS</h3>
++          <div className="list">{adm && adm.proposals && adm.proposals.length ? adm.proposals.map((p) => <div className="row" key={p.id}><b>#{p.id}</b><span>{(adm.kinds || {})[p.kind] || p.kind}</span><span className="mono">{p.ip || p.node || (p.value ? "value " + p.value : "")}</span><span className={"pill " + (p.executed ? "ok" : "warn")}>{p.executed ? "executed" : p.approvals + " signature(s)"}</span>{!p.executed && <button className="btn ghost" disabled={!admin || busy === "ap" + p.id} onClick={() => approve(p.id)}>Sign</button>}</div>) : <div className="note">No proposals yet.</div>}</div>
++          {adm && adm.params && <div className="card" style={{ marginTop: 12 }}><h3>Current rules</h3><div className="mono">governors {adm.params.govCount} · signatures needed {adm.params.govThreshold} · quorum {adm.params.quorumPct}% · max reports/hour {adm.params.maxReportsPerHour || "unlimited"}</div></div>}
++        </>}
++
++        {tab === "l2" && <>
++          <Explain title="Layer 2 · what is implemented">Early-warning canary files and write-rate watch → kill rule finds the process (kernel report on Linux, open files, top writer) and stops it → containment cuts the network (dry or apply) → attack classified (encrypt / wipe / double extortion / data theft / note only) → append-only encrypted vault restores a <b>verified</b> copy (checked against a manifest and the chain anchor). <b>Try it:</b> start the mock ransomware, then recover.</Explain>
++          <div className="grid">{l2.length ? l2.map((t) => <Tile key={t.label} {...t} />) : <div className="note">Layer 2 data not available (guard not running or agent not reachable).</div>}</div>
++          <div className="card" style={{ marginTop: 12 }}><h3>Operator actions {admin ? "" : "(administrator only)"}</h3>
++            <div className="form">
++              <button className="btn danger" disabled={!admin || !!busy} onClick={runRansomware}>▶ Start mock ransomware (demo)</button>
++              <button className="btn" disabled={!admin || !!busy} onClick={rollback}>Roll back to clean state</button>
++              <button className="btn" disabled={!admin || !!busy} onClick={() => recovery("recover")}>Recover from vault</button>
++              <button className="btn ghost" disabled={!admin || !!busy} onClick={() => recovery("unfreeze")}>Unfreeze vault</button>
++            </div>
++            {rbOut && <pre className="mono note" style={{ whiteSpace: "pre-wrap" }}>{(rbOut.output || rbOut.error || "").slice(0, 900)}</pre>}
++          </div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>LAYER 2 TIMELINE</h3><Timeline layer={2} />
++        </>}
++
++        {tab === "sec" && <>
++          <Explain title="How this console protects itself">Sign-in with lockout · short sessions (idle logout, absolute limit) · HttpOnly + SameSite=Strict cookie · read-only and administrator roles · every change needs a same-origin request with a confirmation header · strict browser security headers (no framing, no foreign scripts, no cross-site requests) · agents answer only signed requests (HMAC, optional mutual TLS) · every action in a hash-chained audit log.</Explain>
++          <div className="grid">
++            <Tile label="Your role" value={me ? me.role : "…"} note={admin ? "can operate" : "read-only"} />
++            <Tile label="Session" value={me ? Math.ceil(me.expiresIn / 60) + " min" : "…"} note={me ? "idle limit; hard limit " + Math.ceil(me.maxIn / 60) + " min" : ""} />
++            <Tile label="Connection" value={typeof window !== "undefined" && window.location.protocol === "https:" ? "HTTPS" : "plain HTTP"} note={typeof window !== "undefined" && window.location.protocol === "https:" ? "encrypted" : "use TLS=1 / a TLS proxy outside the lab"} tone={typeof window !== "undefined" && window.location.protocol === "https:" ? "ok" : "warn"} />
++            <Tile label="Self-protection (T)" value={rec && rec.selfguard ? (rec.selfguard.ok ? "OK" : "ALERT") : "not running"} note="signed file manifest, process watch" tone={rec && rec.selfguard && !rec.selfguard.ok ? "bad" : ""} />
++          </div>
++          <h3 className="muted" style={{ margin: "16px 0 8px" }}>REGISTERED LAPTOPS</h3>
++          <div className="list">{peers && peers.peers && Object.keys(peers.peers).length ? Object.entries(peers.peers).map(([r, p]) => <div className="row" key={r}><b>{r}</b><span className="mono">{p.ip}</span><span className={"pill " + (p.online ? "ok" : "bad")}>{p.online ? "online" : "OFFLINE"}</span><span className="note">heartbeat {age(p.age)}</span></div>) : <div className="note">Discovery mode off, or no laptop registered.</div>}</div>
++        </>}
++
++        {tab === "audit" && admin && <>
++          <Explain title="Audit log">Sign-ins, failures, lockouts, refused requests, rollbacks, recoveries, governance and demo actions. Each line contains the hash of the line before; if anyone edits or deletes one, the check below turns red.</Explain>
++          <div className="head"><span className={"pill " + (aud && aud.ok ? "ok" : "bad")}>{aud ? (aud.ok ? "chain intact · " + aud.total + " entries" : "TAMPERED near entry " + aud.bad) : "loading…"}</span></div>
++          <div className="list">{aud && aud.entries && aud.entries.map((e, i) => <div className="row" key={i}><span className="t mono">{e.t.slice(11, 19)}</span><span className={"pill " + (/FAIL|DENIED|REFUSED|LOCKED|ERROR/.test(e.action) ? "bad" : "info")}>{e.action}</span><span>{e.who}</span><span className="mono note">{e.ip}</span><span className="note">{e.detail}</span></div>)}</div>
++        </>}
++      </main>
++      {toast && <div className="toast" role="status" onClick={() => setToast(null)}>{String(toast).slice(0, 600)}</div>}
++    </div>
++  );
++}
+diff -ruN b2/dashboard/app/ShieldLive.jsx new/dashboard/app/ShieldLive.jsx
+--- b2/dashboard/app/ShieldLive.jsx	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/ShieldLive.jsx	1970-01-01 00:00:00.000000000 +0000
+@@ -1,314 +0,0 @@
+-"use client";
+-import { useEffect, useState } from "react";
+-
+-const NAMES = ["Node A (target, Org1)", "Node B (peer, Org2)", "Node C (Org1)"];
+-const WARMUP = "203.0.113.1";   // start_lab.sh warm-up report: not a real attack
+-const real = (l) => (l ? l.filter((i) => i !== WARMUP) : null);
+-
+-export default function ShieldLive() {
+-  const [s, setS] = useState({ status: "connecting..." });
+-  const [det, setDet] = useState({ flagged: 0, kills: 0 });
+-  const [blk, setBlk] = useState({});
+-  const [tl, setTl] = useState([]);
+-  const [rb, setRb] = useState(null);
+-  const [busy, setBusy] = useState(false);
+-  const [mx, setMx] = useState([]);
+-  const [live, setLive] = useState({ multi: false });
+-  const [rec, setRec] = useState({ available: false });
+-  const [nodes, setNodes] = useState({ discovery: false, peers: {} });
+-  const [recOut, setRecOut] = useState(null);
+-  const [recBusy, setRecBusy] = useState(false);
+-  useEffect(() => {
+-    let alive = true;
+-    const tick = async () => {
+-      try { const r = await fetch("/api/peers", { cache: "no-store" }); if (alive) setNodes(await r.json()); } catch {}
+-    };
+-    tick();
+-    const id = setInterval(tick, 5000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  useEffect(() => {   // Hyperledger Fabric state, read by the dashboard server through the gateway (/api/chain)
+-    let alive = true;
+-    async function tick() {
+-      try {
+-        const r = await fetch("/api/chain", { cache: "no-store" });
+-        const j = await r.json();
+-        if (alive) setS(j);
+-      } catch (e) {
+-        if (alive) setS({ status: "error: " + e.message });
+-      }
+-    }
+-    tick();
+-    const id = setInterval(tick, 2000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  useEffect(() => {
+-    let alive = true;
+-    async function poll() {
+-      try {
+-        const r = await fetch("/api/detector", { cache: "no-store" });
+-        if (alive) setDet(await r.json());
+-      } catch {}
+-    }
+-    poll();
+-    const id = setInterval(poll, 1000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  useEffect(() => {
+-    let alive = true;
+-    async function poll() {
+-      try {
+-        const [b, l] = await Promise.all([
+-          fetch("/api/blocked", { cache: "no-store" }).then((r) => r.json()),
+-          fetch("/api/timeline", { cache: "no-store" }).then((r) => r.json()),
+-        ]);
+-        if (alive) { setBlk(b); setTl(l); }
+-      } catch {}
+-    }
+-    poll();
+-    const id = setInterval(poll, 2000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  useEffect(() => {
+-    fetch("/metrics.json", { cache: "no-store" }).then((r) => r.json()).then(setMx).catch(() => {});
+-  }, []);
+-
+-  useEffect(() => {   // four-laptop mode: numbers for the run that just happened
+-    let alive = true;
+-    async function poll() {
+-      try {
+-        const r = await fetch("/api/live", { cache: "no-store" });
+-        if (alive) setLive(await r.json());
+-      } catch {}
+-    }
+-    poll();
+-    const id = setInterval(poll, 2000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  const fmt = (v) => (v === null || v === undefined ? "waiting..." : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v + " ms");
+-  const restoreMs = rb && rb.output ? (rb.output.match(/RESTORED \d+ files.*?([\d.]+) ms/) || [])[1] : null;
+-  useEffect(() => {
+-    let alive = true;
+-    const tick = async () => {
+-      try {
+-        const r = await fetch("/api/recovery", { cache: "no-store" });
+-        if (alive) setRec(await r.json());
+-      } catch {}
+-    };
+-    tick();
+-    const id = setInterval(tick, 2000);
+-    return () => { alive = false; clearInterval(id); };
+-  }, []);
+-
+-  async function doRecovery(action) {
+-    const msg = action === "recover"
+-      ? "Recover the protected folder from the newest verified vault snapshot? The encrypted folder is kept aside as evidence."
+-      : "Unfreeze the vault and restart the guard? Only do this after recovery, when the machine is clean.";
+-    if (!window.confirm(msg)) return;
+-    setRecBusy(true);
+-    try {
+-      const r = await fetch("/api/recovery", {
+-        method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" },
+-        body: JSON.stringify({ action }),
+-      });
+-      setRecOut(await r.json());
+-    } catch (e) { setRecOut({ ok: false, output: String(e) }); }
+-    setRecBusy(false);
+-  }
+-
+-  const age = (sec) => sec == null ? "n/a" : sec < 90 ? Math.round(sec) + " s ago" : Math.round(sec / 60) + " min ago";
+-  const recTiles = !rec.available ? [] : [
+-    { label: "Vault", value: rec.frozen ? "FROZEN" : "protecting", note: rec.frozen ? (rec.freeze && rec.freeze.reason) || "attack suspected" : rec.commits + " snapshots", bad: rec.frozen },
+-    { label: "Last snapshot", value: rec.last_commit ? age(rec.last_commit.age_s) : "none", note: rec.last_commit ? "rev " + rec.last_commit.rev + ", loss window about " + ((rec.guard && rec.guard.debounce_s) || "?") + " s" : "" },
+-    { label: "Guard", value: rec.guard_alive ? "running" : "stopped", note: rec.guard ? "kill " + (rec.guard.kill ? "on" : "off") + ", held files " + rec.guard.held : "start guard.py", bad: !rec.guard_alive },
+-    { label: "Containment", value: rec.containment ? rec.containment.mode.toUpperCase() : "idle", note: rec.containment ? rec.containment.reason : "no attack seen", bad: !!rec.containment },
+-    { label: "Off-machine copy", value: rec.push ? (rec.push.ok ? "pushed" : "FAILED") : rec.remote ? "waiting" : "not set", note: rec.push ? "rev " + rec.push.rev + ", " + age(rec.now - rec.push.t) : "set remote in protect.json", bad: rec.push && !rec.push.ok },
+-    { label: "Self-protection", value: rec.selfguard ? (rec.selfguard.ok ? "OK" : "ALERT") : "not running", note: rec.selfguard ? (rec.selfguard.tampered && rec.selfguard.tampered.length ? "code changed: " + rec.selfguard.tampered.length + " files" : rec.selfguard.down && rec.selfguard.down.length ? "down: " + rec.selfguard.down.join(", ") : "code unchanged, " + (rec.encrypted ? "vault encrypted" : "vault not encrypted")) : "run multi/selfguard.py", bad: rec.selfguard && !rec.selfguard.ok },
+-    { label: "Attack type", value: rec.classification && rec.classification.primary ? ({ crypto: "Encrypting ransomware", wiper: "Wiper (destroys data)", double_extortion: "Double extortion", exfiltration: "Data theft", note_only: "Ransom/scare note only" }[rec.classification.primary] || rec.classification.primary) : "none seen", note: rec.classification && rec.classification.primary ? [rec.classification.types[0].confidence + " confidence", rec.classification.mode, rec.classification.family_hint ? "hint: " + rec.classification.family_hint : null, rec.classification.counts.encrypted + " encrypted, " + rec.classification.counts.wiped + " wiped, " + rec.classification.counts.deleted + " deleted"].filter(Boolean).join("; ") : "types: encrypting, wiper, double extortion, data theft, note only", bad: !!(rec.classification && rec.classification.primary) },
+-    { label: "Last recovery", value: rec.recovery ? (rec.recovery.ok ? "OK" : "FAILED") : "none yet", note: rec.recovery ? (rec.recovery.ok ? rec.recovery.files + " files, " + rec.recovery.ms + " ms, rev " + rec.recovery.rev + (rec.recovery.anchor ? ", chain " + rec.recovery.anchor : "") : "no verified snapshot") : "", bad: rec.recovery && !rec.recovery.ok },
+-  ];
+-
+-  const nodeTiles = !nodes.discovery ? [] : [["target", "Target (T)"], ["peer", "Peer (P)"]].map(([role, label]) => {
+-    const p = nodes.peers[role];
+-    return { label: "Node " + label, value: p ? (p.online ? "online" : "OFFLINE") : "not joined", note: p ? p.ip + ", heartbeat " + age(p.age) : "waiting for it to register", bad: !p || !p.online };
+-  });
+-
+-  const thisRun = !live.multi ? [] : [
+-    { label: "Local block on target", value: fmt(live.dropMs), note: "log line to ipset, laptop T" },
+-    { label: "Peer blocked after target", value: live.clockWarning ? "clocks differ" : fmt(live.peerMs), note: "T to P, clock-synced estimate" },
+-    { label: "Kill after trigger", value: fmt(live.killMs), note: "KILL_TRIGGER to process dead, laptop T" },
+-    { label: "First flag to kill", value: fmt(live.flagToKillMs), note: "laptop T" },
+-    { label: "Other alerts", value: String((live.others ? live.others.login + live.others.arp + live.others.sensor : 0)), note: live.others ? "logins " + live.others.login + ", ARP " + live.others.arp + ", sensors " + live.others.sensor : "login / ARP / sensor detectors off" },
+-    { label: "Flood / scan blocks", value: String(live.floods ?? 0), note: live.lastFlood ? live.lastFlood.kind + " from " + live.lastFlood.ip : "detector off or nothing seen (FLOOD=1 on T)" },
+-    { label: "Rollback restore", value: restoreMs ? restoreMs + " ms" : "click rollback", note: "files restored on T" },
+-    { label: "Rollback click, end to end", value: rb && rb.ms ? fmt(rb.ms) : "click rollback", note: "D to T over the network, includes the chain check" },
+-  ];
+-
+-  async function doRollback() {
+-    if (!window.confirm("Restore the protected folder from the clean snapshot? The chain check runs first.")) return;
+-    setBusy(true);
+-    try {
+-      const r = await fetch("/api/rollback", {
+-        method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" },
+-        body: JSON.stringify({}),   // the server picks the IP (ATTACKER_IP, default 172.30.0.12)
+-      });
+-      setRb(await r.json());
+-    } catch (e) { setRb({ ok: false, output: String(e) }); }
+-    setBusy(false);
+-  }
+-
+-  if (s.status !== "live") {
+-    return <main style={{ padding: 24, fontFamily: "sans-serif" }}>Chain: {s.status}</main>;
+-  }
+-
+-  const colour = (n) =>
+-    n.stake === 0n ? "#c62828"            // slashed
+-    : n.reported && s.confirmed ? "#1565c0" // took part in consensus
+-    : n.reported ? "#ef6c00"                // reported, waiting for a second report
+-    : "#2e7d32";                            // protected
+-
+-  const label = (n) =>
+-    n.stake === 0n ? "slashed"
+-    : n.reported && s.confirmed ? "consensus"
+-    : n.reported ? "reported"
+-    : "protected";
+-
+-  return (
+-    <main style={{ padding: 24, fontFamily: "sans-serif" }}>
+-      <h1>Dual-Shield</h1>
+-      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+-        <div style={{ background: s.confirmed ? "#c62828" : "#2e7d32", color: "#fff", padding: "8px 14px", borderRadius: 20 }}>
+-          Layer 1 (network + chain): {s.confirmed ? "THREAT CONFIRMED" : "monitoring"}
+-        </div>
+-        <div style={{ background: det.kills ? "#c62828" : "#2e7d32", color: "#fff", padding: "8px 14px", borderRadius: 20 }}>
+-          Layer 2 (ransomware): {det.kills ? "ATTACK STOPPED (" + det.kills + " kill)" : "monitoring"}
+-        </div>
+-      </div>
+-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+-        {s.nodes.map((n, i) => (
+-          <div key={n.addr} style={{ background: colour(n), color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+-            <strong>{NAMES[i]}</strong>
+-            <div>{label(n)}</div>
+-            <div style={{ fontSize: 12 }}>{n.addr.split("@")[0]}</div>
+-            <div style={{ fontSize: 12 }}>stake: {Number(n.stake)} (no gas, no coin)</div>
+-          </div>
+-        ))}
+-      </div>
+-      <div style={{ display: "flex", gap: 16, marginTop: 24 }}>
+-        <div style={{ background: det.flagged ? "#ef6c00" : "#455a64", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+-          <strong>Files flagged</strong>
+-          <div style={{ fontSize: 32 }}>{det.flagged}</div>
+-        </div>
+-        <div style={{ background: det.kills ? "#c62828" : "#455a64", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+-          <strong>Kills triggered</strong>
+-          <div style={{ fontSize: 32 }}>{det.kills}</div>
+-        </div>
+-      </div>
+-      <h2 style={{ marginTop: 24 }}>
+-        Consensus tally: {s.count} of {s.n} reports ({s.k} needed)
+-        {s.confirmed ? "  CONFIRMED" : ""}
+-      </h2>
+-      <div>Latest reported IP: {s.ip ?? "none yet"}</div>
+-      <div style={{ display: "flex", gap: 16, marginTop: 24, flexWrap: "wrap" }}>
+-        {["target", "peer"].map((n) => (
+-          <div key={n} style={{ background: "#37474f", color: "#fff", padding: 16, borderRadius: 8, minWidth: 200 }}>
+-            <strong>Blocked on {n}</strong>
+-            <div style={{ fontSize: 32 }}>{real(blk[n]) ? real(blk[n]).length : "n/a"}</div>
+-            <div style={{ fontSize: 12 }}>{real(blk[n]) ? real(blk[n]).slice(0, 4).join(", ") : "container not running"}</div>
+-          </div>
+-        ))}
+-      </div>
+-      <div style={{ marginTop: 24 }}>
+-        <button onClick={doRollback} disabled={busy}
+-          style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#1565c0", color: "#fff", fontSize: 16, cursor: "pointer" }}>
+-          {busy ? "Restoring..." : "Roll back to clean state"}
+-        </button>
+-        {rb && (
+-          <pre style={{ background: rb.ok ? "#e8f5e9" : "#ffebee", color: "#111", padding: 12, borderRadius: 8, marginTop: 12, whiteSpace: "pre-wrap" }}>
+-            {(rb.ok ? "ROLLED BACK" : "REFUSED / FAILED") + " (" + rb.ms + " ms)\n" + rb.output}
+-          </pre>
+-        )}
+-      </div>
+-      {nodeTiles.length > 0 && (
+-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 24 }}>
+-          {nodeTiles.map((m) => (
+-            <div key={m.label} style={{ background: m.bad ? "#c62828" : "#1b4332", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+-              <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+-              <div style={{ fontSize: 22 }}>{m.value}</div>
+-              <div style={{ fontSize: 11, opacity: 0.75 }}>{m.note}</div>
+-            </div>
+-          ))}
+-        </div>
+-      )}
+-      <h2 style={{ marginTop: 24 }}>Recovery vault (Layer 2)</h2>
+-      {!rec.available ? (
+-        <div style={{ color: "#555" }}>Vault not started yet. {rec.error ? "(" + rec.error + ")" : "Run guard.py on the target."}</div>
+-      ) : (
+-        <>
+-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+-            {recTiles.map((m) => (
+-              <div key={m.label} style={{ background: m.bad ? "#c62828" : "#1b4332", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+-                <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+-                <div style={{ fontSize: 22 }}>{m.value}</div>
+-                <div style={{ fontSize: 11, opacity: 0.75 }}>{m.note}</div>
+-              </div>
+-            ))}
+-          </div>
+-          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+-            <button onClick={() => doRecovery("recover")} disabled={recBusy}
+-              style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#2e7d32", color: "#fff", fontSize: 16, cursor: "pointer" }}>
+-              {recBusy ? "Working..." : "Recover from vault"}
+-            </button>
+-            <button onClick={() => doRecovery("unfreeze")} disabled={recBusy || !rec.frozen}
+-              style={{ padding: "10px 18px", borderRadius: 8, border: 0, background: "#455a64", color: "#fff", fontSize: 16, cursor: "pointer", opacity: rec.frozen ? 1 : 0.5 }}>
+-              Unfreeze vault
+-            </button>
+-          </div>
+-          {recOut && (
+-            <pre style={{ background: recOut.ok ? "#e8f5e9" : "#ffebee", color: "#111", padding: 12, borderRadius: 8, marginTop: 12, whiteSpace: "pre-wrap" }}>
+-              {(recOut.ok ? "DONE" : "FAILED") + " (" + recOut.ms + " ms)\n" + recOut.output}
+-            </pre>
+-          )}
+-        </>
+-      )}
+-      {live.multi && (
+-        <>
+-          <h2 style={{ marginTop: 24 }}>This run (four laptops){live.ip ? ", attacker " + live.ip : ""}</h2>
+-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+-            {thisRun.map((m) => (
+-              <div key={m.label} style={{ background: "#1b3a4b", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+-                <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+-                <div style={{ fontSize: 24 }}>{m.value}</div>
+-                <div style={{ fontSize: 11, opacity: 0.7 }}>{m.note}</div>
+-              </div>
+-            ))}
+-          </div>
+-        </>
+-      )}
+-      <h2 style={{ marginTop: 24 }}>{live.multi ? "Measured performance (lab, frozen)" : "Measured performance"}</h2>
+-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+-        {mx.map((m) => (
+-          <div key={m.label} style={{ background: "#263238", color: "#fff", padding: 12, borderRadius: 8, minWidth: 170 }}>
+-            <div style={{ fontSize: 12, opacity: 0.8 }}>{m.label}</div>
+-            <div style={{ fontSize: 24 }}>{m.value}</div>
+-            <div style={{ fontSize: 11, opacity: 0.7 }}>{m.note}</div>
+-          </div>
+-        ))}
+-      </div>
+-      <h2 style={{ marginTop: 24 }}>Event timeline</h2>
+-      <div style={{ fontFamily: "monospace", fontSize: 13 }}>
+-        {tl.length === 0 && <div>no events yet</div>}
+-        {tl.map((e, i) => (
+-          <div key={i} style={{ padding: "3px 0" }}>
+-            {new Date(e.ts * 1000).toLocaleTimeString()}  L{e.layer}  {e.text}
+-          </div>
+-        ))}
+-      </div>
+-    </main>
+-  );
+-}
+diff -ruN b2/dashboard/app/api/admin/chain/route.js new/dashboard/app/api/admin/chain/route.js
+--- b2/dashboard/app/api/admin/chain/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/admin/chain/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,51 @@
++import { call, q, tx } from "../../../../lib/gateway.js";
++import { needAdmin, audit, validIp, validNode } from "../../../../lib/security.js";
++
++// Governance and consensus view. GET: any logged-in role. POST: administrator (propose / approve), validated and audited.
++const WARMUP = "203.0.113.1";
++const KINDS = { 1: "Overrule a confirmed threat (slash its reporters)", 2: "Protect an IP", 3: "Unprotect an IP", 4: "Approve a node", 5: "Revoke a node",
++  6: "Add a governor", 7: "Remove a governor", 8: "Set governor threshold", 9: "Set quorum percent", 10: "Set reports-per-hour limit" };
++const NODES = ["Org1MSP:User1@org1.example.com", "Org2MSP:User1@org2.example.com", "Org1MSP:User2@org1.example.com"];
++
++export async function GET() {
++  try {
++    const params = await q("params");
++    const count = Number(await q("proposalCount"));
++    const proposals = [];
++    for (let id = Math.max(0, count - 12); id < count; id++) { try { proposals.push({ id, ...(await q("getProposal", String(id))) }); } catch {} }
++    const evs = (await call("GET", "/events?after=0&limit=2000")).events.filter((e) => e.ip !== WARMUP);
++    const ips = [...new Set(evs.filter((e) => e.name === "ThreatReported").map((e) => e.ip))].slice(-6);
++    const tallies = await Promise.all(ips.map(async (ip) => ({ ip, ...(await q("getTally", ip)), ...(await q("blockInfo", ip)) })));
++    const nodes = await Promise.all(NODES.map(async (n) => ({ addr: n, ...(await q("nodeInfo", n)) })));
++    return Response.json({ ok: true, params, kinds: KINDS, proposals: proposals.reverse(), tallies, nodes, events: evs.slice(-40).reverse() });
++  } catch (e) { return Response.json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
++}
++
++export async function POST(req) {
++  const { w, deny } = needAdmin(req); if (deny) return deny;
++  const b = await req.json().catch(() => ({}));
++  try {
++    if (b.action === "propose") {
++      const kind = Number(b.kind);
++      if (!Number.isInteger(kind) || kind < 1 || kind > 10) return Response.json({ ok: false, error: "bad kind" }, { status: 400 });
++      const ip = b.ip ? String(b.ip) : "", node = b.node ? String(b.node) : "", value = b.value === undefined || b.value === "" ? 0 : Number(b.value);
++      if ([1, 2, 3].includes(kind) && !validIp(ip)) return Response.json({ ok: false, error: "valid IP address needed" }, { status: 400 });
++      if ([4, 5, 6, 7].includes(kind) && !validNode(node)) return Response.json({ ok: false, error: "node id like Org1MSP:User1@org1.example.com needed" }, { status: 400 });
++      if (!Number.isInteger(value) || value < 0 || value > 1000) return Response.json({ ok: false, error: "value 0..1000" }, { status: 400 });
++      const r = await tx("propose", String(kind), ip, node, String(value));
++      audit("GOV_PROPOSE", w.name, w.ip, `kind=${kind} ip=${ip} node=${node} value=${value} -> id ${r && r.id}`);
++      return Response.json({ ok: true, result: r });
++    }
++    if (b.action === "approve") {
++      const id = Number(b.id);
++      if (!Number.isInteger(id) || id < 0 || id > 1e6) return Response.json({ ok: false, error: "bad id" }, { status: 400 });
++      await tx("approve", String(id));
++      audit("GOV_APPROVE", w.name, w.ip, "proposal " + id);
++      return Response.json({ ok: true });
++    }
++    return Response.json({ ok: false, error: "unknown action" }, { status: 400 });
++  } catch (e) {
++    audit("GOV_ERROR", w.name, w.ip, String(e.message || e));
++    return Response.json({ ok: false, error: String(e.message || e).slice(0, 200) });
++  }
++}
+diff -ruN b2/dashboard/app/api/admin/demo/route.js new/dashboard/app/api/admin/demo/route.js
+--- b2/dashboard/app/api/admin/demo/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/admin/demo/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,16 @@
++import { MULTI, agent } from "../../../../lib/agent.js";
++import { needAdmin, audit } from "../../../../lib/security.js";
++
++// Demonstration controls (administrator, audited). DEMO_MODE=0 removes them for a real deployment.
++export async function POST(req) {
++  const { w, deny } = needAdmin(req); if (deny) return deny;
++  if (process.env.DEMO_MODE === "0") return Response.json({ ok: false, error: "demo controls are disabled (DEMO_MODE=0)" }, { status: 403 });
++  const b = await req.json().catch(() => ({}));
++  if (b.action !== "ransomware") return Response.json({ ok: false, error: "unknown action" }, { status: 400 });
++  if (!MULTI) return Response.json({ ok: false, error: "needs MULTI=1 (agents on T and P)" });
++  try {
++    const r = await agent("target", "/ransomware", { method: "POST", body: "{}", timeout: 20000 });
++    audit("DEMO_RANSOMWARE", w.name, w.ip, r.output || "");
++    return Response.json({ ok: !!r.ok, output: r.output || "" });
++  } catch (e) { return Response.json({ ok: false, output: "target agent not reachable: " + e.message }); }
++}
+diff -ruN b2/dashboard/app/api/audit/route.js new/dashboard/app/api/audit/route.js
+--- b2/dashboard/app/api/audit/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/audit/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,6 @@
++import { who, readAudit } from "../../../lib/security.js";
++// administrator only: the audit trail with a check that nobody edited or removed a line (each line holds the hash of the one before).
++export async function GET(req) {
++  if (who(req).role !== "admin") return Response.json({ ok: false, error: "administrator role required" }, { status: 403 });
++  return Response.json({ ok: true, ...readAudit(80) });
++}
+diff -ruN b2/dashboard/app/api/auth/login/route.js new/dashboard/app/api/auth/login/route.js
+--- b2/dashboard/app/api/auth/login/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/auth/login/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,22 @@
++import { checkPassword, issue, cookieHeader, clientIp, lockedFor, noteFail, noteOk, sameOrigin, audit, configured } from "../../../../lib/security.js";
++
++export async function POST(req) {
++  const ip = clientIp(req);
++  if (!configured()) return Response.json({ ok: false, error: "dashboard not configured" }, { status: 503 });
++  if (!sameOrigin(req)) { audit("CSRF_REFUSED", "-", ip, "login"); return Response.json({ ok: false, error: "refused" }, { status: 403 }); }
++  const wait = lockedFor(ip);
++  if (wait > 0) { audit("LOGIN_LOCKED", "-", ip, wait + "s"); return Response.json({ ok: false, error: "Too many attempts. Try again in " + wait + " s." }, { status: 429, headers: { "Retry-After": String(wait) } }); }
++  const body = await req.json().catch(() => ({}));
++  const pass = typeof body.password === "string" ? body.password.slice(0, 200) : "";
++  const role = checkPassword(pass);
++  if (!role) {
++    noteFail(ip);
++    await new Promise((r) => setTimeout(r, 600));          // slows guessing, the same for every wrong answer
++    audit("LOGIN_FAIL", "-", ip, "wrong password");
++    return Response.json({ ok: false, error: "Wrong password." }, { status: 401 });
++  }
++  noteOk(ip);
++  audit("LOGIN_OK", role, ip, "");
++  const s = issue(role);
++  return Response.json({ ok: true, role }, { headers: { "Set-Cookie": cookieHeader(s.token, s.maxAge) } });
++}
+diff -ruN b2/dashboard/app/api/auth/logout/route.js new/dashboard/app/api/auth/logout/route.js
+--- b2/dashboard/app/api/auth/logout/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/auth/logout/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,7 @@
++import { sameOrigin, sessionOf, revoke, clearCookie, audit, clientIp } from "../../../../lib/security.js";
++export async function POST(req) {
++  if (!sameOrigin(req)) return Response.json({ ok: false }, { status: 403 });
++  const t = sessionOf(req);
++  if (t) { revoke(t); audit("LOGOUT", t.r, clientIp(req), ""); }
++  return Response.json({ ok: true }, { headers: { "Set-Cookie": clearCookie() } });
++}
+diff -ruN b2/dashboard/app/api/auth/me/route.js new/dashboard/app/api/auth/me/route.js
+--- b2/dashboard/app/api/auth/me/route.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/api/auth/me/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,6 @@
++import { sessionOf } from "../../../../lib/security.js";
++export async function GET(req) {
++  const t = sessionOf(req);
++  if (!t) return Response.json({ ok: false }, { status: 401 });
++  return Response.json({ ok: true, role: t.r, expiresIn: t.e - Math.floor(Date.now() / 1000), maxIn: t.a - Math.floor(Date.now() / 1000) });
++}
+diff -ruN b2/dashboard/app/api/blocked/route.js new/dashboard/app/api/blocked/route.js
+--- b2/dashboard/app/api/blocked/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/blocked/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,7 +1,9 @@
++import { connection } from "next/server";
+ import { execSync } from "child_process";
+ import { MULTI, agent } from "../../../lib/agent.js";
+ 
+ export async function GET() {
++  await connection();   // never prerendered or cached at build time: always live data
+   const out = {};
+   for (const n of ["target", "peer"]) {
+     try {
+diff -ruN b2/dashboard/app/api/chain/route.js new/dashboard/app/api/chain/route.js
+--- b2/dashboard/app/api/chain/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/chain/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,46 +1,21 @@
+-import fs from "fs";
+-import path from "path";
+-import http from "http";
+-import https from "https";
++import { call, q } from "../../../lib/gateway.js";
+ 
+ // Live state of the CityShield chaincode on Hyperledger Fabric, read through the gateway on this laptop (fabric/gateway/server.js).
+ // Replaces the old browser-side Hardhat/ethers calls. Fabric has no gas and no ETH: "stake" is a plain counter in the chaincode.
+ const WARMUP = "203.0.113.1";   // start-up warm-up report, not a real attack
+-const TLS = process.env.TLS === "1";
+-const GW = process.env.GATEWAY_URL || `${TLS ? "https" : "http"}://127.0.0.1:${process.env.GATEWAY_PORT || 8600}`;
+-const TLS_DIR = process.env.TLS_DIR || path.join(process.cwd(), "..", "multi", "tls", "dashboard");
+ const NODES = ["Org1MSP:User1@org1.example.com", "Org2MSP:User1@org2.example.com", "Org1MSP:User2@org1.example.com"];
+ 
+-function call(method, p, obj) {
+-  return new Promise((resolve, reject) => {
+-    const u = new URL(GW + p), body = obj ? JSON.stringify(obj) : null;
+-    const opt = { host: u.hostname, port: u.port, path: u.pathname + u.search, method, timeout: 8000,
+-      headers: body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {} };
+-    let mod = http;
+-    if (TLS) {
+-      mod = https;
+-      Object.assign(opt, { ca: fs.readFileSync(path.join(TLS_DIR, "ca.crt")), cert: fs.readFileSync(path.join(TLS_DIR, "node.crt")),
+-        key: fs.readFileSync(path.join(TLS_DIR, "node.key")), minVersion: "TLSv1.2", rejectUnauthorized: true, checkServerIdentity: () => undefined });
+-    }
+-    const r = mod.request(opt, (res) => {
+-      const ch = []; res.on("data", (c) => ch.push(c));
+-      res.on("end", () => { try { const o = JSON.parse(Buffer.concat(ch).toString()); o.ok === false ? reject(new Error(o.error)) : resolve(o); } catch (e) { reject(e); } });
+-    });
+-    r.on("error", reject); r.on("timeout", () => r.destroy(new Error("gateway timeout")));
+-    if (body) r.write(body);
+-    r.end();
+-  });
+-}
+-const q = async (fn, ...args) => JSON.parse((await call("POST", "/query", { who: 0, fn, args })).result);
+ 
+ export async function GET() {
+   try {
+     const p = await q("params");
+-    const evs = (await call("GET", "/events?after=0&limit=2000")).events.filter((e) => e.name === "ThreatReported" && e.ip !== WARMUP);
++    const all = (await call("GET", "/events?after=0&limit=2000")).events;
++    const slashed = new Set(all.filter((e) => e.name === "NodeSlashed" || e.name === "NodeRevoked").map((e) => e.node));
++    const evs = all.filter((e) => e.name === "ThreatReported" && e.ip !== WARMUP);
+     const ip = evs.length ? evs[evs.length - 1].ip : null;
+     const t = ip ? await q("getTally", ip) : { count: 0, k: p.required, confirmed: false };
+     const reporters = new Set(evs.filter((e) => e.ip === ip).map((e) => e.node));
+-    const nodes = await Promise.all(NODES.map(async (a) => ({ addr: a, stake: (await q("nodeInfo", a)).stake, reported: reporters.has(a) })));
++    const nodes = await Promise.all(NODES.map(async (a) => ({ addr: a, stake: (await q("nodeInfo", a)).stake, reported: reporters.has(a), slashed: slashed.has(a) })));
+     return Response.json({ status: "live", k: p.required, n: p.nodeCount, ip, count: t.count, confirmed: t.confirmed, nodes });
+   } catch (e) {
+     return Response.json({ status: "error: " + (e.message || e) });
+diff -ruN b2/dashboard/app/api/detector/route.js new/dashboard/app/api/detector/route.js
+--- b2/dashboard/app/api/detector/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/detector/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,8 +1,10 @@
++import { connection } from "next/server";
+ import fs from "fs";
+ import path from "path";
+ import { MULTI, agentLog } from "../../../lib/agent.js";
+ 
+ export async function GET() {
++  await connection();   // never prerendered or cached at build time: always live data
+   let text = "";
+   if (MULTI) {
+     text = (await agentLog("target", "watch", 500)).join("\n");   // watch.log lives on laptop T
+diff -ruN b2/dashboard/app/api/live/route.js new/dashboard/app/api/live/route.js
+--- b2/dashboard/app/api/live/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/live/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,3 +1,4 @@
++import { connection } from "next/server";
+ import { MULTI, agentLog } from "../../../lib/agent.js";
+ 
+ // Four-laptop mode only: numbers for the run that just happened, computed from the logs on T and P.
+@@ -5,6 +6,7 @@
+ const grab = (lines, re) => lines.map((l) => l.match(re)).filter(Boolean);
+ 
+ export async function GET() {
++  await connection();   // never prerendered or cached at build time: always live data
+   if (!MULTI) return Response.json({ multi: false });
+   const [pb, eb, watch, met, fl, lg, ar, sn] = await Promise.all([
+     agentLog("target", "parser_block", 50),
+diff -ruN b2/dashboard/app/api/peers/route.js new/dashboard/app/api/peers/route.js
+--- b2/dashboard/app/api/peers/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/peers/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,7 +1,9 @@
++import { connection } from "next/server";
+ import { discovered } from "../../../lib/agent.js";
+ 
+ // Registered laptops (discovery mode): who joined, from which address, and whether the heartbeat is fresh.
+ export async function GET() {
++  await connection();   // never prerendered or cached at build time: always live data
+   const d = discovered();
+   if (!d) return Response.json({ discovery: process.env.DISCOVERY === "1", peers: {} });
+   const peers = {};
+diff -ruN b2/dashboard/app/api/recovery/route.js new/dashboard/app/api/recovery/route.js
+--- b2/dashboard/app/api/recovery/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/recovery/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -2,6 +2,7 @@
+ import fs from "fs";
+ import path from "path";
+ import { MULTI, agent } from "../../../lib/agent.js";
++import { needAdmin, audit } from "../../../lib/security.js";
+ 
+ // Recovery panel data (Layer 2 recovery): vault, guard, containment, last recovery.
+ //   GET  /api/recovery                         -> summary (four-laptop mode: asked from laptop T's agent)
+@@ -31,6 +32,7 @@
+     return Response.json({ ok: false, output: "unknown action" }, { status: 400 });
+   }
+   const t0 = Date.now();
++  audit("RECOVERY_" + action.toUpperCase(), w.name, w.ip, "requested");
+   try {
+     if (MULTI) {
+       const ip = process.env.ATTACKER_IP || "";
+diff -ruN b2/dashboard/app/api/rollback/route.js new/dashboard/app/api/rollback/route.js
+--- b2/dashboard/app/api/rollback/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/rollback/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,16 +1,14 @@
+ import { execFileSync } from "child_process";
+ import path from "path";
+ import { MULTI, agent } from "../../../lib/agent.js";
++import { needAdmin, audit } from "../../../lib/security.js";
+ 
+ // POST /api/rollback  {ip?}  -> restores data/sample_copy from the clean snapshot,
+ // but only if its Merkle root matches the root anchored on-chain for that IP.
+ export async function POST(req) {
+-  // v2: a custom header cannot be added by another website (it would need a CORS preflight), so a page
+-  // on another site cannot ride on the operator's saved login to trigger a rollback.
+-  if (req.headers.get("x-ds-confirm") !== "1") {
+-    return Response.json({ ok: false, output: "missing x-ds-confirm header" }, { status: 403 });
+-  }
++  const { w, deny } = needAdmin(req); if (deny) return deny;
+   const body = await req.json().catch(() => ({}));
++  audit("ROLLBACK", w.name, w.ip, "requested");
+   const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : (process.env.ATTACKER_IP || "172.30.0.12");
+   if (MULTI) {   // four-laptop mode: laptop T restores its own folder and checks the chain
+     const t0m = Date.now();
+diff -ruN b2/dashboard/app/api/timeline/route.js new/dashboard/app/api/timeline/route.js
+--- b2/dashboard/app/api/timeline/route.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/api/timeline/route.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,3 +1,4 @@
++import { connection } from "next/server";
+ import fs from "fs";
+ import path from "path";
+ import { execSync } from "child_process";
+@@ -10,6 +11,7 @@
+ }
+ 
+ export async function GET() {
++  await connection();   // never prerendered or cached at build time: always live data
+   const ev = [];
+   // Layer 2: ransomware detector (host file)
+   let text = "";
+diff -ruN b2/dashboard/app/globals.css new/dashboard/app/globals.css
+--- b2/dashboard/app/globals.css	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/globals.css	2026-11-09 05:00:06.000000000 +0000
+@@ -47,3 +47,35 @@
+     color-scheme: dark;
+   }
+ }
++
++/* ---- Dual-Shield console (v13) ---- */
++:root { --bg:#0b1220; --panel:#121b2e; --panel2:#18233b; --line:#243352; --text:#e6edf7; --mut:#8fa1c2; --ok:#22c55e; --bad:#ef4444; --warn:#f59e0b; --info:#38bdf8; --acc:#6366f1; }
++body.ds { background: var(--bg); color: var(--text); }
++.loginWrap { min-height:100vh; display:grid; place-items:center; background: var(--bg); color: var(--text); padding:16px; }
++.loginCard { width:100%; max-width:380px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px; display:flex; flex-direction:column; gap:10px; }
++.loginCard h1 { margin:0; font-size:22px; } .logo { width:44px; height:44px; border-radius:12px; background:var(--acc); display:grid; place-items:center; font-weight:700; }
++.loginCard input { background:var(--bg); border:1px solid var(--line); border-radius:8px; color:var(--text); padding:10px 12px; font-size:15px; }
++.loginCard button, .btn { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 14px; font-size:14px; cursor:pointer; }
++.btn.danger { background:#b91c1c; } .btn.ghost { background:transparent; border:1px solid var(--line); color:var(--text); } .btn:disabled, .loginCard button:disabled { opacity:.5; cursor:not-allowed; }
++.err { background:#3b1219; color:#fecaca; border:1px solid #7f1d1d; padding:8px 10px; border-radius:8px; font-size:13px; }
++.muted { color:var(--mut); font-size:13px; margin:0; } .tiny { color:var(--mut); font-size:11px; margin:6px 0 0; }
++.shell { display:flex; min-height:100vh; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Arial,sans-serif; }
++.side { width:220px; flex:0 0 220px; background:var(--panel); border-right:1px solid var(--line); padding:16px 10px; display:flex; flex-direction:column; gap:4px; position:sticky; top:0; height:100vh; }
++.side h2 { font-size:16px; margin:0 8px 12px; } .side .tab { text-align:left; background:transparent; color:var(--mut); border:0; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; }
++.side .tab:hover { background:var(--panel2); color:var(--text); } .side .tab.on { background:var(--acc); color:#fff; }
++.side .spacer { flex:1; } .who { font-size:12px; color:var(--mut); padding:8px; }
++.main { flex:1; min-width:0; padding:20px 24px 40px; } .head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
++.head h1 { font-size:22px; margin:0; } .pill { padding:5px 12px; border-radius:999px; font-size:12px; font-weight:600; color:#fff; }
++.pill.ok { background:#15803d; } .pill.bad { background:#b91c1c; } .pill.warn { background:#b45309; } .pill.info { background:#0369a1; } .pill.mut { background:#334155; }
++.grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); } .grid.two { grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
++.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; } .card h3 { margin:0 0 8px; font-size:13px; color:var(--mut); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
++.big { font-size:22px; font-weight:700; } .note { color:var(--mut); font-size:12px; margin-top:4px; word-break:break-word; }
++.tile.bad { border-color:#7f1d1d; background:#241218; } .tile.ok { border-color:#14532d; } .tile.warn { border-color:#78350f; }
++.explain { background:var(--panel2); border:1px dashed var(--line); border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.55; margin-bottom:14px; } .explain b { color:#c7d2fe; }
++.list { display:flex; flex-direction:column; gap:6px; font-size:13px; } .row { display:flex; gap:10px; align-items:center; padding:7px 10px; background:var(--panel2); border-radius:8px; flex-wrap:wrap; }
++.row .t { color:var(--mut); font-size:11px; min-width:64px; } .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
++.form { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; } .form label { font-size:11px; color:var(--mut); display:flex; flex-direction:column; gap:3px; }
++.form input, .form select { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; font-size:13px; min-width:120px; }
++.toast { position:fixed; right:16px; bottom:16px; background:var(--panel2); border:1px solid var(--line); padding:12px 16px; border-radius:10px; max-width:420px; font-size:13px; white-space:pre-wrap; z-index:5; }
++.node { border-radius:12px; padding:14px; color:#fff; } .tl { border-left:2px solid var(--line); margin-left:6px; padding-left:12px; }
++@media (max-width:820px) { .shell { flex-direction:column; } .side { width:auto; flex:none; height:auto; position:static; flex-direction:row; overflow-x:auto; padding:8px; } .side h2,.side .spacer,.who { display:none; } .side .tab { white-space:nowrap; } .main { padding:14px; } }
+diff -ruN b2/dashboard/app/layout.js new/dashboard/app/layout.js
+--- b2/dashboard/app/layout.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/layout.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,24 +1,15 @@
+-import { Geist, Geist_Mono } from "next/font/google";
+ import "./globals.css";
+ 
+-const geistSans = Geist({
+-  variable: "--font-geist-sans",
+-  subsets: ["latin"],
+-});
+-
+-const geistMono = Geist_Mono({
+-  variable: "--font-geist-mono",
+-  subsets: ["latin"],
+-});
+-
++// No web fonts: nothing is fetched from the internet (works offline in the lab and keeps the CSP strict).
+ export const metadata = {
+-  title: "Create Next App",
+-  description: "Generated by create next app",
++  title: "Dual-Shield",
++  description: "Two-layer defence: network consensus on Hyperledger Fabric and ransomware recovery",
++  robots: { index: false, follow: false },
+ };
+ 
+ export default function RootLayout({ children }) {
+   return (
+-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
++    <html lang="en">
+       <body>{children}</body>
+     </html>
+   );
+diff -ruN b2/dashboard/app/login/LoginForm.jsx new/dashboard/app/login/LoginForm.jsx
+--- b2/dashboard/app/login/LoginForm.jsx	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/login/LoginForm.jsx	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,30 @@
++"use client";
++import { useState } from "react";
++
++export default function LoginForm() {
++  const [pw, setPw] = useState(""), [msg, setMsg] = useState(""), [busy, setBusy] = useState(false);
++  async function submit(e) {
++    e.preventDefault(); setBusy(true); setMsg("");
++    try {
++      const r = await fetch("/api/auth/login", { method: "POST", headers: { "content-type": "application/json", "x-ds-confirm": "1" }, body: JSON.stringify({ password: pw }) });
++      const j = await r.json();
++      if (j.ok) { window.location.href = "/"; return; }
++      setMsg(j.error || "Sign in failed."); setPw("");
++    } catch { setMsg("Server not reachable."); }
++    setBusy(false);
++  }
++  return (
++    <main className="loginWrap">
++      <form className="loginCard" onSubmit={submit} autoComplete="off">
++        <div className="logo">DS</div>
++        <h1>Dual-Shield</h1>
++        <p className="muted">Operator console. Sign in with the administrator or the read-only viewer password.</p>
++        <label htmlFor="pw">Password</label>
++        <input id="pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus required minLength={8} maxLength={200} />
++        <button disabled={busy || pw.length < 8}>{busy ? "Checking..." : "Sign in"}</button>
++        {msg && <div className="err" role="alert">{msg}</div>}
++        <p className="tiny">Repeated wrong passwords lock this screen for a while. Every sign-in is written to a tamper-evident audit log.</p>
++      </form>
++    </main>
++  );
++}
+diff -ruN b2/dashboard/app/login/page.js new/dashboard/app/login/page.js
+--- b2/dashboard/app/login/page.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/app/login/page.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,3 @@
++import LoginForm from "./LoginForm";
++export const metadata = { title: "Dual-Shield sign in" };
++export default function Page() { return <LoginForm />; }
+diff -ruN b2/dashboard/app/page.js new/dashboard/app/page.js
+--- b2/dashboard/app/page.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/app/page.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,5 +1,3 @@
+-import ShieldLive from "./ShieldLive";
+-
+-export default function Home() {
+-  return <ShieldLive />;
+-}
++import AdminConsole from "./AdminConsole";
++export const metadata = { title: "Dual-Shield console" };
++export default function Home() { return <AdminConsole />; }
+diff -ruN b2/dashboard/lib/gateway.js new/dashboard/lib/gateway.js
+--- b2/dashboard/lib/gateway.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/lib/gateway.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,32 @@
++import fs from "fs";
++import path from "path";
++import http from "http";
++import https from "https";
++
++// Talks to the Fabric gateway on this laptop (fabric/gateway/server.js). who 0 = the dashboard's own identity (owner / governor).
++const TLS = process.env.TLS === "1";
++const GW = process.env.GATEWAY_URL || `${TLS ? "https" : "http"}://127.0.0.1:${process.env.GATEWAY_PORT || 8600}`;
++const TLS_DIR = process.env.TLS_DIR || path.join(process.cwd(), "..", "multi", "tls", "dashboard");
++
++export function call(method, p, obj, timeout = 8000) {
++  return new Promise((resolve, reject) => {
++    const u = new URL(GW + p), body = obj ? JSON.stringify(obj) : null;
++    const opt = { host: u.hostname, port: u.port, path: u.pathname + u.search, method, timeout,
++      headers: body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {} };
++    let mod = http;
++    if (TLS) {
++      mod = https;
++      Object.assign(opt, { ca: fs.readFileSync(path.join(TLS_DIR, "ca.crt")), cert: fs.readFileSync(path.join(TLS_DIR, "node.crt")),
++        key: fs.readFileSync(path.join(TLS_DIR, "node.key")), minVersion: "TLSv1.2", rejectUnauthorized: true, checkServerIdentity: () => undefined });
++    }
++    const r = mod.request(opt, (res) => {
++      const ch = []; res.on("data", (c) => ch.push(c));
++      res.on("end", () => { try { const o = JSON.parse(Buffer.concat(ch).toString()); o.ok === false ? reject(new Error(o.error)) : resolve(o); } catch (e) { reject(e); } });
++    });
++    r.on("error", reject); r.on("timeout", () => r.destroy(new Error("gateway timeout")));
++    if (body) r.write(body);
++    r.end();
++  });
++}
++export const q = async (fn, ...args) => JSON.parse((await call("POST", "/query", { who: 0, fn, args })).result);
++export const tx = async (fn, ...args) => { const r = await call("POST", "/tx", { who: 0, fn, args }, 30000); try { return JSON.parse(r.result); } catch { return r.result; } };
+diff -ruN b2/dashboard/lib/security.js new/dashboard/lib/security.js
+--- b2/dashboard/lib/security.js	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/lib/security.js	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,180 @@
++// Dual-Shield dashboard security core (v13). Node runtime only (used by proxy.js and the route handlers).
++//  * login with two roles: admin (DASH_PASS) and optional read-only viewer (DASH_VIEW_PASS)
++//  * stateless HMAC-signed session cookie: HttpOnly, SameSite=Strict, short idle timeout, absolute maximum, revocable on logout
++//  * login lockout with exponential back-off (per client and global), constant-time password checks
++//  * same-origin check for every state-changing request, hash-chained audit log
++import crypto from "crypto";
++import fs from "fs";
++import path from "path";
++
++export const COOKIE = "ds_session";
++const IDLE_S = Number(process.env.DASH_IDLE_S || 1800);       // logged out after 30 minutes without use
++const MAX_S = Number(process.env.DASH_MAX_S || 8 * 3600);     // and never later than 8 hours after login
++export const SECURE = process.env.TLS === "1" || process.env.DASH_SECURE_COOKIE === "1";
++
++const g = globalThis;
++g.__ds ||= { revoked: new Set(), fails: new Map(), auditPrev: null };
++const S = g.__ds;
++
++const sha = (s) => crypto.createHash("sha256").update(String(s)).digest();
++const KEY = () => sha("ds-session-v13|" + (process.env.DASH_SESSION_KEY || "") + "|" + (process.env.DASH_PASS || "") + "|" + (process.env.DASH_VIEW_PASS || ""));
++const b64 = (b) => Buffer.from(b).toString("base64url");
++const mac = (data) => crypto.createHmac("sha256", KEY()).update(data).digest("base64url");
++export const safeEq = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));   // equal-length digests, constant time
++
++export function configured() { return String(process.env.DASH_PASS || "").length >= 8; }
++
++export function checkPassword(given) {
++  const admin = process.env.DASH_PASS || "", view = process.env.DASH_VIEW_PASS || "";
++  const a = admin.length >= 8 && safeEq(given, admin);
++  const v = view.length >= 8 && view !== admin && safeEq(given, view);
++  return a ? "admin" : v ? "viewer" : null;
++}
++
++export function issue(role, prev) {
++  const now = Math.floor(Date.now() / 1000);
++  const t = { r: role, i: now, e: now + IDLE_S, a: prev ? prev.a : now + MAX_S, s: prev ? prev.s : crypto.randomBytes(12).toString("hex") };
++  t.e = Math.min(t.e, t.a);
++  const body = b64(JSON.stringify(t));
++  return { token: body + "." + mac(body), data: t, maxAge: t.e - now };
++}
++
++export function verify(token) {
++  if (!token || typeof token !== "string" || token.length > 600) return null;
++  const [body, sig] = token.split(".");
++  if (!body || !sig) return null;
++  const want = mac(body);
++  if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return null;
++  let t; try { t = JSON.parse(Buffer.from(body, "base64url").toString()); } catch { return null; }
++  const now = Math.floor(Date.now() / 1000);
++  if (!t || (t.r !== "admin" && t.r !== "viewer") || now > t.e || now > t.a || isRevoked(t.s)) return null;
++  return t;
++}
++// revoked sessions live in a small file, because the proxy and the route handlers may run as separate module instances
++const REV = () => process.env.DASH_REVOKED || path.join(process.cwd(), "..", "multi", "logs", "dashboard_revoked.txt");
++let revCache = { m: -1, set: new Set() };
++function isRevoked(sid) {
++  if (S.revoked.has(sid)) return true;
++  try {
++    const m = fs.statSync(REV()).mtimeMs;
++    if (m !== revCache.m) revCache = { m, set: new Set(fs.readFileSync(REV(), "utf8").split("\n").filter(Boolean)) };
++    return revCache.set.has(sid);
++  } catch { return false; }
++}
++export const revoke = (t) => {
++  if (!t || !t.s) return;
++  S.revoked.add(t.s);
++  try { fs.mkdirSync(path.dirname(REV()), { recursive: true }); fs.appendFileSync(REV(), t.s + "\n", { mode: 0o600 }); } catch {}
++};
++
++export function cookieHeader(token, maxAge) {
++  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${SECURE ? "; Secure" : ""}`;
++}
++export const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${SECURE ? "; Secure" : ""}`;
++
++export function readCookie(req) {
++  const h = req.headers.get("cookie") || "";
++  for (const part of h.split(";")) { const i = part.indexOf("="); if (i > 0 && part.slice(0, i).trim() === COOKIE) return part.slice(i + 1).trim(); }
++  return "";
++}
++export const sessionOf = (req) => verify(readCookie(req));
++
++// the address of the client; X-Forwarded-For is trusted only when a reverse proxy in front is declared (DASH_TRUST_PROXY=1)
++export function clientIp(req) {
++  if (process.env.DASH_TRUST_PROXY === "1") {
++    const x = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim();
++    if (/^[0-9a-fA-F.:]{3,45}$/.test(x)) return x;
++  }
++  return "direct";
++}
++
++// ---- login lockout: 5 failures -> 30 s, doubling to 15 min; a global counter slows a distributed guesser too
++function slot(k) { let f = S.fails.get(k); if (!f) { f = { n: 0, until: 0, last: 0 }; S.fails.set(k, f); } return f; }
++export function lockedFor(ip) {
++  const now = Date.now();
++  return Math.max(0, ...["ip:" + ip, "global"].map((k) => Math.ceil(((S.fails.get(k) || { until: 0 }).until - now) / 1000)));
++}
++export function noteFail(ip) {
++  const now = Date.now();
++  for (const [k, lim] of [["ip:" + ip, 5], ["global", 20]]) {
++    const f = slot(k);
++    if (now - f.last > 3600e3) f.n = 0;
++    f.n++; f.last = now;
++    if (f.n >= lim) f.until = now + Math.min(900e3, 30e3 * 2 ** Math.min(10, f.n - lim));
++  }
++  if (S.fails.size > 2000) S.fails.clear();
++}
++export function noteOk(ip) { S.fails.delete("ip:" + ip); }
++
++// ---- same-origin: a state-changing request must come from this dashboard's own pages
++export function sameOrigin(req) {
++  const site = req.headers.get("sec-fetch-site");
++  if (site && site !== "same-origin") return false;
++  const o = req.headers.get("origin");
++  if (o) { try { return new URL(o).host === (req.headers.get("host") || ""); } catch { return false; } }
++  return !!site || req.headers.get("x-ds-confirm") === "1";
++}
++
++// ---- audit log: every login, logout, refusal and admin action; each line carries the hash of the previous one
++const AUDIT = () => process.env.DASH_AUDIT || path.join(process.cwd(), "..", "multi", "logs", "dashboard_audit.jsonl");
++const hashLine = (o) => crypto.createHash("sha256").update(JSON.stringify(o)).digest("hex");
++function lastHash() {
++  if (S.auditPrev) return S.auditPrev;
++  try {
++    const lines = fs.readFileSync(AUDIT(), "utf8").trim().split("\n").filter(Boolean);
++    S.auditPrev = lines.length ? JSON.parse(lines[lines.length - 1]).h : "0".repeat(64);
++  } catch { S.auditPrev = "0".repeat(64); }
++  return S.auditPrev;
++}
++export function audit(action, who, ip, detail) {
++  try {
++    const e = { t: new Date().toISOString(), who: who || "-", ip: ip || "-", action, detail: String(detail || "").slice(0, 300), prev: lastHash() };
++    e.h = hashLine(e);
++    fs.mkdirSync(path.dirname(AUDIT()), { recursive: true });
++    fs.appendFileSync(AUDIT(), JSON.stringify(e) + "\n", { mode: 0o600 });
++    S.auditPrev = e.h;
++  } catch {}
++}
++export function readAudit(n = 100) {
++  let lines = [];
++  try { lines = fs.readFileSync(AUDIT(), "utf8").trim().split("\n").filter(Boolean); } catch {}
++  let prev = "0".repeat(64), ok = true, bad = -1;
++  const all = lines.map((l, i) => {
++    let e = {}; try { e = JSON.parse(l); } catch { ok = false; bad = bad < 0 ? i : bad; return null; }
++    const { h, ...rest } = e;
++    if (rest.prev !== prev || hashLine(rest) !== h) { if (ok) bad = i; ok = false; }
++    prev = h || prev;
++    return e;
++  }).filter(Boolean);
++  return { ok, bad, total: all.length, entries: all.slice(-n).reverse() };
++}
++
++export function securityHeaders(h) {
++  const dev = process.env.NODE_ENV !== "production";
++  h.set("Content-Security-Policy", ["default-src 'self'", `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`, "style-src 'self' 'unsafe-inline'",
++    "img-src 'self' data:", "font-src 'self' data:", "connect-src 'self'" + (dev ? " ws: wss:" : ""), "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"].join("; "));
++  h.set("X-Content-Type-Options", "nosniff");
++  h.set("X-Frame-Options", "DENY");
++  h.set("Referrer-Policy", "no-referrer");
++  h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
++  h.set("Cross-Origin-Opener-Policy", "same-origin");
++  h.set("Cross-Origin-Resource-Policy", "same-origin");
++  if (SECURE) h.set("Strict-Transport-Security", "max-age=31536000");
++  return h;
++}
++
++// helpers for route handlers (the proxy has already checked the session; this is the second lock)
++export function who(req) {
++  const t = sessionOf(req);
++  return { role: t ? t.r : null, ip: clientIp(req), name: t ? t.r : "-" };
++}
++export function needAdmin(req) {
++  const w = who(req);
++  if (w.role !== "admin") { audit("DENIED", w.name, w.ip, req.method + " " + new URL(req.url).pathname); return { w, deny: Response.json({ ok: false, error: "administrator role required" }, { status: 403 }) }; }
++  if (!sameOrigin(req) || req.headers.get("x-ds-confirm") !== "1") { audit("CSRF_REFUSED", w.name, w.ip, new URL(req.url).pathname); return { w, deny: Response.json({ ok: false, error: "cross-site or unconfirmed request refused" }, { status: 403 }) }; }
++  return { w, deny: null };
++}
++export const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
++export const IPV6 = /^[0-9a-fA-F:]{2,39}$/;
++export const validIp = (s) => typeof s === "string" && (IPV4.test(s) ? s.split(".").every((x) => +x <= 255) : IPV6.test(s) && s.includes(":"));
++export const validNode = (s) => typeof s === "string" && /^[A-Za-z0-9]{2,20}MSP:[A-Za-z0-9@._-]{1,90}$/.test(s);
+diff -ruN b2/dashboard/proxy.js new/dashboard/proxy.js
+--- b2/dashboard/proxy.js	2026-11-09 05:00:06.000000000 +0000
++++ new/dashboard/proxy.js	2026-11-09 05:00:06.000000000 +0000
+@@ -1,32 +1,36 @@
+ import { NextResponse } from "next/server";
++import { configured, sessionOf, issue, cookieHeader, clearCookie, securityHeaders, sameOrigin, audit, clientIp } from "./lib/security.js";
+ 
+-// v2: the whole dashboard (page and /api/*) needs the operator password (HTTP Basic, user "operator").
+-// Set DASH_PASS before starting. For the old open lab mode set DASH_AUTH=off explicitly.
+-// (v9: no contract file any more; the chain is Hyperledger Fabric, read through /api/chain.)
+-const same = (a, b) => {
+-  if (a.length !== b.length) return false;
+-  let d = 0;
+-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+-  return d === 0;
+-};
+-
++// v13: every page and every /api call needs a valid session (log in at /login). The only open doors are /login and POST /api/auth/login.
++//   viewer: read-only (GET).  admin: may also POST, but only same-origin and with the x-ds-confirm header.
++// DASH_AUTH=off still switches everything off for the old open lab mode (not for demonstrations to an evaluator).
+ export function proxy(request) {
+-  if (process.env.DASH_AUTH === "off") return NextResponse.next();
+-  const pass = process.env.DASH_PASS || "";
+-  if (pass.length < 8) {
+-    return new NextResponse("Dashboard locked: set DASH_PASS (at least 8 characters) in multi/config.env.", { status: 503 });
++  const { pathname } = request.nextUrl;
++  const done = (res) => { securityHeaders(res.headers); if (pathname.startsWith("/api/")) res.headers.set("Cache-Control", "no-store"); return res; };
++  if (process.env.DASH_AUTH === "off") return done(NextResponse.next());
++  if (!configured()) return done(new NextResponse("Dashboard locked: set DASH_PASS (at least 8 characters) in multi/config.env.", { status: 503 }));
++
++  const open = pathname === "/login" || (pathname === "/api/auth/login" && request.method === "POST");
++  const sess = sessionOf(request);
++  if (open) return done(NextResponse.next());
++
++  if (!sess) {
++    if (pathname.startsWith("/api/")) return done(NextResponse.json({ ok: false, error: "login required" }, { status: 401 }));
++    const res = NextResponse.redirect(new URL("/login", request.url));
++    res.headers.append("Set-Cookie", clearCookie());
++    return done(res);
+   }
+-  const h = request.headers.get("authorization") || "";
+-  if (h.startsWith("Basic ")) {
+-    let user = "", given = "";
+-    try { [user, given] = atob(h.slice(6)).split(/:(.*)/s); } catch {}
+-    if (same(user || "", "operator") && same(given || "", pass)) return NextResponse.next();
++  if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/auth/logout") {   // any signed-in role may sign out
++    if (sess.r !== "admin") { audit("DENIED", sess.r, clientIp(request), request.method + " " + pathname); return done(NextResponse.json({ ok: false, error: "read-only account" }, { status: 403 })); }
++    if ((!sameOrigin(request) || request.headers.get("x-ds-confirm") !== "1")) {
++      audit("CSRF_REFUSED", sess.r, clientIp(request), pathname);
++      return done(NextResponse.json({ ok: false, error: "cross-site or unconfirmed request refused" }, { status: 403 }));
++    }
+   }
+-  return new NextResponse("Operator login required", {
+-    status: 401, headers: { "WWW-Authenticate": 'Basic realm="Dual-Shield operator"' },
+-  });
++  const res = NextResponse.next();
++  const now = Math.floor(Date.now() / 1000);
++  if (now - sess.i > 60) { const n = issue(sess.r, sess); res.headers.append("Set-Cookie", cookieHeader(n.token, n.maxAge)); }   // sliding idle timeout
++  return done(res);
+ }
+ 
+-export const config = {
+-  matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
+-};
++export const config = { matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"] };
+diff -ruN b2/dashboard/test_security.py new/dashboard/test_security.py
+--- b2/dashboard/test_security.py	1970-01-01 00:00:00.000000000 +0000
++++ new/dashboard/test_security.py	2026-11-09 05:00:06.000000000 +0000
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python3
++"""Dashboard security tests: starts the production server on a spare port with test passwords and attacks it.
++Run:  cd dashboard && npm run build && python3 test_security.py"""
++import http.client, json, os, subprocess, sys, tempfile, time, base64
++PORT = 3077
++tmp = tempfile.mkdtemp()
++env = dict(os.environ, DASH_PASS="adminpass123", DASH_VIEW_PASS="viewerpass123", DASH_AUDIT=tmp + "/audit.jsonl", DASH_REVOKED=tmp + "/rev.txt", GATEWAY_PORT="1")
++srv = subprocess.Popen(["npx", "next", "start", "-p", str(PORT)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=os.path.dirname(os.path.abspath(__file__)))
++ok = True
++def req(method, path, body=None, cookie=None, headers=None):
++    c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
++    h = {"content-type": "application/json"}; h.update(headers or {})
++    if cookie: h["cookie"] = cookie
++    c.request(method, path, json.dumps(body) if body is not None else None, h)
++    r = c.getresponse(); data = r.read().decode(); return r.status, dict(r.getheaders()), data
++def check(name, cond):
++    global ok; print(("PASS " if cond else "FAIL ") + name); ok &= bool(cond)
++def login(pw):
++    s, h, d = req("POST", "/api/auth/login", {"password": pw}, headers={"x-ds-confirm": "1"})
++    ck = [v for k, v in h.items() if k.lower() == "set-cookie"]
++    return s, (ck[0].split(";")[0] if ck else None), ck[0] if ck else ""
++C = {"x-ds-confirm": "1"}
++try:
++    for _ in range(60):
++        try: req("GET", "/login"); break
++        except Exception: time.sleep(0.5)
++    check("page without session redirects to /login", req("GET", "/")[0] in (307, 308, 302))
++    check("API without session is 401", req("GET", "/api/chain")[0] == 401)
++    s, ck_admin, raw = login("adminpass123")
++    check("admin login works, cookie is HttpOnly + SameSite=Strict", s == 200 and "HttpOnly" in raw and "SameSite=Strict" in raw)
++    s, ck_view, _ = login("viewerpass123")
++    check("viewer login works", s == 200)
++    check("viewer may read", req("GET", "/api/peers", cookie=ck_view)[0] == 200)
++    check("viewer may not POST", req("POST", "/api/rollback", {}, ck_view, C)[0] == 403)
++    check("viewer may not read audit log", req("GET", "/api/audit", cookie=ck_view)[0] == 403)
++    check("admin POST without confirm header refused", req("POST", "/api/rollback", {}, ck_admin)[0] == 403)
++    check("admin POST marked cross-site refused", req("POST", "/api/rollback", {}, ck_admin, dict(C, **{"Sec-Fetch-Site": "cross-site"}))[0] == 403)
++    check("governance input injection refused", req("POST", "/api/admin/chain", {"action": "propose", "kind": "2", "ip": "1.2.3.4; rm -rf /"}, ck_admin, C)[0] == 400)
++    body, sig = ck_view.split("=", 1)[1].split(".")
++    forged = base64.urlsafe_b64encode(base64.urlsafe_b64decode(body + "==").replace(b"viewer", b"admin")).decode().rstrip("=")
++    check("forged role in cookie rejected", req("GET", "/api/peers", cookie="ds_session=%s.%s" % (forged, sig))[0] == 401)
++    check("tampered signature rejected", req("GET", "/api/peers", cookie="ds_session=%s.%s" % (body, sig[::-1]))[0] == 401)
++    s, h, _ = req("GET", "/api/auth/me", cookie=ck_admin)
++    low = {k.lower(): v for k, v in h.items()}
++    check("security headers present", "frame-ancestors 'none'" in low.get("content-security-policy", "") and low.get("x-frame-options") == "DENY" and low.get("x-content-type-options") == "nosniff")
++    check("API responses are not cacheable", low.get("cache-control") == "no-store")
++    req("POST", "/api/auth/logout", {}, ck_view, C)
++    check("old cookie dead after logout", req("GET", "/api/peers", cookie=ck_view)[0] == 401)
++    check("wrong password refused", login("wrongwrong")[0] == 401)
++    codes = [login("badbadbad")[0] for _ in range(6)]
++    check("lockout after repeated failures", 429 in codes)
++    check("right password refused while locked", login("adminpass123")[0] == 429)
++    audit = open(tmp + "/audit.jsonl").read().strip().split("\n")
++    check("audit log written and hash-chained", len(audit) >= 5 and json.loads(audit[1])["prev"] == json.loads(audit[0])["h"])
++finally:
++    srv.terminate()
++print("ALL PASS" if ok else "SOME FAILED"); sys.exit(0 if ok else 1)
+diff -ruN b2/multi/common.sh new/multi/common.sh
+--- b2/multi/common.sh	2026-11-09 05:00:06.000000000 +0000
++++ new/multi/common.sh	2026-11-09 04:59:21.000000000 +0000
+@@ -6,7 +6,7 @@
+   exit 1
+ fi
+ . "$CFG"
+-export TLS DISCOVERY REGISTRY_PORT AGENT_SECRET_T AGENT_SECRET_P DASH_PASS CHAIN_IP_KEY WHITELIST_CIDRS SELFGUARD_KEY
++export DASH_VIEW_PASS DASH_SESSION_KEY DASH_IDLE_S DASH_MAX_S DEMO_MODE DASH_DEV TLS DISCOVERY REGISTRY_PORT AGENT_SECRET_T AGENT_SECRET_P DASH_PASS CHAIN_IP_KEY WHITELIST_CIDRS SELFGUARD_KEY
+ export GATEWAY_PORT="${GATEWAY_PORT:-8600}" GATEWAY_LAB D_IP
+ # v9: the chain is Hyperledger Fabric (no gas). T and P talk to the Fabric gateway on D: http://D_IP:GATEWAY_PORT, or with TLS=1
+ # https with mutual TLS (private CA, multi/make_tls.sh); the gateway lets each certificate use only its own Fabric identity.
+diff -ruN b2/multi/config.env.example new/multi/config.env.example
+--- b2/multi/config.env.example	2026-11-09 05:00:06.000000000 +0000
++++ new/multi/config.env.example	2026-11-09 04:59:21.000000000 +0000
+@@ -11,6 +11,9 @@
+ AGENT_SECRET_T=
+ AGENT_SECRET_P=
+ DASH_PASS=
++# v13 dashboard: DASH_VIEW_PASS = read-only account, DASH_SESSION_KEY = extra secret for session cookies, DASH_IDLE_S (default 1800), DEMO_MODE=0 hides the demo buttons, DASH_DEV=1 runs the dev server
++DASH_VIEW_PASS=
++DASH_SESSION_KEY=
+ 
+ # Layer 2 recovery on T: 1 = the agent starts guard.py (continuous vault + kill rule + containment) for the
+ # demo attack; 0 = the old plain watcher only. The dashboard "Recovery vault" panel needs 1.
+diff -ruN b2/multi/gen_secrets.sh new/multi/gen_secrets.sh
+--- b2/multi/gen_secrets.sh	2026-11-09 05:00:06.000000000 +0000
++++ new/multi/gen_secrets.sh	2026-11-09 04:59:21.000000000 +0000
+@@ -5,3 +5,5 @@
+ echo "AGENT_SECRET_T=$(r)"
+ echo "AGENT_SECRET_P=$(r)"
+ echo "DASH_PASS=$(r | head -c 14)"
++echo "DASH_VIEW_PASS=$(r | head -c 14)      # optional: read-only account for the evaluator"
++echo "DASH_SESSION_KEY=$(r)"
+diff -ruN b2/multi/start_D.sh new/multi/start_D.sh
+--- b2/multi/start_D.sh	2026-11-09 05:00:06.000000000 +0000
++++ new/multi/start_D.sh	2026-11-09 04:59:21.000000000 +0000
+@@ -26,7 +26,7 @@
+ echo
+ echo "Chain:     Hyperledger Fabric channel cityshield (no gas). Gateway on :$GATEWAY_PORT ($([ "${TLS:-0}" = "1" ] && echo "mutual TLS" || echo "plain HTTP"), lab identities: GATEWAY_LAB=${GATEWAY_LAB:-1})"
+ echo "           run sudo multi/lockdown.sh D so only T and P can reach the gateway"
+-echo "Dashboard: http://localhost:3000   login: operator / DASH_PASS"
++echo "Dashboard: http://localhost:3000   sign in with DASH_PASS (administrator) or DASH_VIEW_PASS (read-only viewer)"
+ echo "Now start T and P (sudo multi/start_T.sh, sudo multi/start_P.sh). Dashboard starting ..."
+ if [ "${TLS:-0}" = "1" ]; then
+   pkill -f tls_proxy.py 2>/dev/null
+@@ -41,4 +41,8 @@
+ SCHEME=http; [ "${TLS:-0}" = "1" ] && SCHEME=https
+ cd "$ROOT/dashboard"
+ GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:8800" PEER_AGENT="$SCHEME://$P_IP:8800" ATTACKER_IP="$A_IP" \
+-  exec npm run dev -- -H "$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
++  bash -c 'HOST="$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
++    if [ "${DASH_DEV:-0}" = "1" ]; then exec npm run dev -- -H "$HOST"; fi
++    # production build: no development server, no source maps in the browser, live data never cached
++    npm run build >"'"$LOGD"'/dashboard_build.out" 2>&1 || { echo "dashboard build failed, see '"$LOGD"'/dashboard_build.out"; exit 1; }
++    exec npm run start -- -H "$HOST" -p 3000' 
