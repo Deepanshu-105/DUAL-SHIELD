@@ -36,6 +36,8 @@ def init(folder, remote=None):
         sh("git", "init", "-q")
         sh("git", "config", "user.email", "vault@dual-shield.local")
         sh("git", "config", "user.name", "Dual-Shield Vault")
+        sh("git", "config", "core.autocrlf", "false")
+        sh("git", "config", "core.safecrlf", "false")
     if remote:
         existing = sh("git", "remote", check=False).stdout.split()
         if "origin" not in existing:

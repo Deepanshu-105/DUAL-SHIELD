@@ -267,6 +267,45 @@ def ancestors():
     return safe
 
 
+_SCAN_CODE = (
+    "import os,sys,psutil\n"
+    "folder=sys.argv[1]\n"
+    "ps=sorted(psutil.process_iter(['pid','name','create_time']),key=lambda p:-(p.info.get('create_time') or 0))\n"   # newest processes first
+    "for p in ps:\n"
+    " try:\n"
+    "  for of in p.open_files():\n"
+    "   if os.path.normcase(os.path.realpath(of.path)).startswith(folder):\n"
+    "    print(p.info['pid'],p.info.get('name') or '',flush=True); break\n"
+    " except Exception: pass\n")
+_scan_off_until = 0.0
+
+def _open_scan_subprocess(folder, limit=3.0):
+    """v13.3: on Windows psutil's open_files() can hang inside C code and freeze every thread of the caller (seen on Win11 / psutil 7.2),
+    which also stalled the watchdog thread. So the scan runs in a child process we can kill; whatever it printed before the deadline is used.
+    After a timeout the scan stays off for 60 s so one hanging handle cannot slow every later event."""
+    global _scan_off_until
+    import subprocess
+    if time.time() < _scan_off_until:
+        return set()
+    found = set()
+    pr = subprocess.Popen([sys.executable, "-c", _SCAN_CODE, folder], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        out, _ = pr.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        pr.kill()
+        try: out, _ = pr.communicate(timeout=2)
+        except Exception: out = ""
+        _scan_off_until = time.time() + 60
+    for line in (out or "").splitlines():
+        try:
+            pid = int(line.split()[0])
+        except (ValueError, IndexError):
+            continue
+        if not _protected_name(line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""):
+            found.add(pid)
+    return found
+
+
 def pids_with_open_file_under(folder):
     folder = os.path.normcase(os.path.realpath(folder)) + os.sep
     found = set()
@@ -274,17 +313,7 @@ def pids_with_open_file_under(folder):
     if IS_WIN and ps is None:
         return found
     if ps is not None and (IS_WIN or not os.path.isdir("/proc")):
-        for p in ps.process_iter(["pid", "name"]):
-            if _protected_name(p.info.get("name")):
-                continue
-            try:
-                for of in p.open_files():
-                    if os.path.normcase(os.path.realpath(of.path)).startswith(folder):
-                        found.add(p.info["pid"])
-                        break
-            except Exception:       # AccessDenied, NoSuchProcess, ZombieProcess, Windows handle quirks
-                continue
-        return found
+        return _open_scan_subprocess(folder)
     for entry in os.scandir("/proc"):
         if not entry.name.isdigit():
             continue
@@ -324,16 +353,6 @@ def pids_by_cmdline(needles):
     return found
 
 
-def _activity(p, ps):
-    """Grows while the process works: bytes written if the kernel exposes /proc/<pid>/io, else CPU time (weaker signal,
-    used on kernels such as stock WSL2 where psutil has no io_counters)."""
-    if hasattr(p, "io_counters"):
-        io = p.io_counters()
-        return max(io.write_bytes, getattr(io, "write_chars", 0))
-    t = p.cpu_times()
-    return int((t.user + t.system) * 1e6)
-
-
 class WriterTracker:
     """Who is writing a lot right now? Samples every process's cumulative write bytes (psutil) and reports the biggest growth since
     the previous sample. Used when no process is seen holding a file open (Windows ransomware often opens, writes, closes quickly).
@@ -350,7 +369,7 @@ class WriterTracker:
             if _protected_name(p.info.get("name")):
                 continue
             try:
-                cur[p.info["pid"]] = _activity(p, ps)
+                cur[p.info["pid"]] = p.io_counters().write_bytes
             except Exception:
                 continue
         now = time.time()

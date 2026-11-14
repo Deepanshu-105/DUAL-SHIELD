@@ -212,6 +212,14 @@ class Guard:
                 names = ["%s/%s" % (k, rel) for k, v in flagged.items() for rel in v] or deleted[:20]
                 print("GATE_TRIPPED %s, commit skipped" % ("%d suspicious files" % n if n >= self.cfg["gate_threshold"] else "%d files deleted at once" % len(deleted)), flush=True)
                 self._contain("gate: %d files flagged, %d deleted" % (n, len(deleted)), names)
+                if self.rules:                                   # v13.3: the gate is proof enough -> fire the kill rule without waiting for 3 FLAGGED events
+                    def _kill(rel0=(names[0].split("/", 1)[-1] if names else "")):   # own thread: scanning open files can be slow/hang on Windows and must never block the freeze
+                        for _rule in list(self.rules.values()):
+                            try:
+                                _rule.on_flag(rel0, force=True)
+                            except Exception as e:
+                                print("KILL_ERROR %s" % e, flush=True)
+                    threading.Thread(target=_kill, daemon=True).start()
                 return None
             hold = {}
             for name, files in flagged.items():
