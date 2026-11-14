@@ -1,15 +1,24 @@
-blockchain/node_modules/
+
+# v6/v7: private keys and discovery state must never be committed
+# v9 Hyperledger Fabric: downloaded binaries and the generated network (keys!) are never committed
+*.pyc
+.venv/
+DUAL-SHIELD/
+__pycache__/
 blockchain/artifacts/
 blockchain/cache/
-blockchain/deployed.json
-.venv/
-__pycache__/
-*.pyc
-network/measurements.csv
-detector/tor_exit_nodes.txt
-__pycache__/
 blockchain/data/*.csv
-
+blockchain/deployed.json
+blockchain/node_modules/
+detector/tor_exit_nodes.txt
+fabric/**/node_modules/
+fabric/bin/
+fabric/config/
+fabric/network/
 multi/config.env
-DUAL-SHIELD/
+multi/logs/
+multi/peers.env
+multi/peers.json
+multi/tls/
+network/measurements.csv
 ransomware/evidence/*.json

@@ -1,0 +1,16 @@
+| attack | expected | named | correct | gate_tripped | vault_clean | detect_s | kill | recovered | recover_s |
+|---|---|---|---|---|---|---|---|---|---|
+| Crypto ransomware (LockBit-like, rename + note) | crypto | crypto | yes | yes | yes | 0.6 | n/a | yes, bit-for-bit | 1.75 |
+| Crypto, header kept (evasive) | crypto | crypto | yes | yes | yes | 0.59 | n/a | yes, bit-for-bit | 1.69 |
+| Crypto, encrypted copy + delete original | crypto | crypto | yes | yes | yes | 0.55 | n/a | yes, bit-for-bit | 1.8 |
+| Wiper, zero-fill | wiper | wiper | yes | yes | yes | 0.02 | n/a | yes, bit-for-bit | 1.71 |
+| Wiper, truncate to 0 | wiper | wiper | yes | yes | yes | 0.02 | n/a | yes, bit-for-bit | 1.63 |
+| Wiper, mass delete | wiper | wiper | yes | yes | yes | 0.01 | n/a | yes, bit-for-bit | 1.57 |
+| Double extortion (encrypt + stage archive + note) | double_extortion | double_extortion | yes | yes | yes | 0.48 | n/a | yes, bit-for-bit | 1.55 |
+| Data theft only (archive staged) | exfiltration | exfiltration | yes | no | yes | 1.18 | n/a | n/a |  |
+| Locker / note only | note_only | note_only | yes | no | yes | 1.15 | n/a | n/a |  |
+| Benign edits (false-positive check) | no alarm | no alarm | yes | no | yes | 1.23 | n/a | n/a |  |
+| LIVE crypto process (handle held open) | killed | crypto | yes | yes | yes | 3.42 | yes | yes, bit-for-bit | 1.92 |
+| LIVE wiper process (zero-fill) | killed | wiper | yes | yes | yes | 3.66 | yes | yes, bit-for-bit | 1.9 |
+
+12 scenarios, 0 problems. detect_s = time from end of attack to verdict (live rows: time to kill). Run on: win32

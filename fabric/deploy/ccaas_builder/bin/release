@@ -1,0 +1,5 @@
+#!/bin/bash
+BLD="$1"; REL="$2"
+if [ -d "$BLD/metadata" ]; then mkdir -p "$REL/statedb" && cp -a "$BLD/metadata/." "$REL/statedb/"; fi
+[ -f "$BLD/connection.json" ] && { mkdir -p "$REL/chaincode/server" && cp "$BLD/connection.json" "$REL/chaincode/server/connection.json"; }
+exit 0

@@ -8,10 +8,11 @@ set's creation options, so the existing ipset and iptables rule keep working.
   python3 detector/expire_blocks.py --ttl 3600                 # loop forever (run as root)
   python3 detector/expire_blocks.py --ttl 3600 --once --dry    # show what would be removed
 """
-import argparse, re, subprocess, sys, time
+import argparse, os, re, subprocess, sys, time
 
-LOGS = ["/var/log/parser_block.log", "/var/log/peer_block.log", "/var/log/flood_block.log",
-        "/var/log/login_block.log", "/var/log/arp_alert.log"]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import shield_os            # v10: Linux ipset/iptables or Windows Firewall
+LOGS = [shield_os.log_path(n) for n in ("parser_block.log", "peer_block.log", "flood_block.log", "login_block.log", "arp_alert.log")]
 LINE = re.compile(r"^(?:PARSER_BLOCK|PEER_BLOCK|FLOOD_BLOCK|LOGIN_BLOCK|ARP_BLOCK) ip=(\S+) ts=([\d.]+)")
 UNBLOCK = re.compile(r"^PEER_UNBLOCK ip=(\S+) ts=([\d.]+)")
 
@@ -46,10 +47,14 @@ def sweep(ttl, paths, dry=False, setname="city_blacklist"):
         if dry:
             print("EXPIRE_DRY_RUN would remove", ip, flush=True)
         else:
-            r = subprocess.run(["ipset", "del", setname, ip, "-exist"], capture_output=True, text=True)
-            if r.returncode == 0:
+            try:
+                shield_os.block_del(ip)
+                ok = True
+            except shield_os.BlockError:
+                ok = False
+            if ok:
                 print("EXPIRED ip=%s ts=%.3f" % (ip, time.time()), flush=True)
-                with open("/var/log/peer_block.log", "a") as f:
+                with open(shield_os.log_path("peer_block.log"), "a") as f:
                     f.write("PEER_UNBLOCK ip=%s ts=%.3f reason=expired\n" % (ip, time.time()))
         gone.append(ip)
     return gone

@@ -5,3 +5,5 @@ r() { head -c 24 /dev/urandom | base64 | tr -d '/+=\n'; }
 echo "AGENT_SECRET_T=$(r)"
 echo "AGENT_SECRET_P=$(r)"
 echo "DASH_PASS=$(r | head -c 14)"
+echo "DASH_VIEW_PASS=$(r | head -c 14)      # optional: read-only account for the evaluator"
+echo "DASH_SESSION_KEY=$(r)"

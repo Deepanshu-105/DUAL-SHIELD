@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { MULTI, agentLog } from "../../../lib/agent.js";
 
 // Four-laptop mode only: numbers for the run that just happened, computed from the logs on T and P.
@@ -5,6 +6,7 @@ const HIDE = (ip) => ip === "203.0.113.1" || ip.startsWith("198.51.100.");   // 
 const grab = (lines, re) => lines.map((l) => l.match(re)).filter(Boolean);
 
 export async function GET() {
+  await connection();   // never prerendered or cached at build time: always live data
   if (!MULTI) return Response.json({ multi: false });
   const [pb, eb, watch, met, fl, lg, ar, sn] = await Promise.all([
     agentLog("target", "parser_block", 50),

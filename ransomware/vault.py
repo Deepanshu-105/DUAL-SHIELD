@@ -14,10 +14,13 @@ Extensions (steps 5-7):
     python3 vault.py verify [--rev R]    recompute Merkle roots, compare with the committed manifest
     python3 vault.py fsck                git object integrity check
     python3 vault.py summary             JSON used by the dashboard
+    python3 vault.py encrypt-on          encrypt everything stored in git / pushed away (AES-256-GCM)
     python3 vault.py restore data/out --root docs     restore one named root
 Continuous, gated, multi-root protection lives in guard.py (uses these helpers).
 """
 import argparse, hashlib, json, os, shutil, subprocess, sys, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 VAULT = "data/vault"
 
@@ -33,6 +36,8 @@ def init(folder, remote=None):
         sh("git", "init", "-q")
         sh("git", "config", "user.email", "vault@dual-shield.local")
         sh("git", "config", "user.name", "Dual-Shield Vault")
+        sh("git", "config", "core.autocrlf", "false")
+        sh("git", "config", "core.safecrlf", "false")
     if remote:
         existing = sh("git", "remote", check=False).stdout.split()
         if "origin" not in existing:
@@ -59,6 +64,11 @@ def freeze(reason="manual"):
 def unfreeze():
     if os.path.exists(LOCK):
         os.remove(LOCK)
+        try:                      # the incident is over: archive its attack-type verdict instead of showing it forever
+            if os.path.exists("evidence/ransom_class.json"):
+                os.replace("evidence/ransom_class.json", "evidence/ransom_class.%d.json" % int(time.time()))
+        except OSError:
+            pass
         print("VAULT_UNFROZEN")
     else:
         print("VAULT_NOT_FROZEN")
@@ -179,12 +189,38 @@ def status():
     return info
 
 
+def _untar(fileobj, dest):
+    import tarfile
+    tar = tarfile.open(fileobj=fileobj)
+    try:
+        tar.extractall(dest, filter="data")          # safe extraction (Python 3.12+)
+    except TypeError:
+        tar.extractall(dest)
+
+
+def is_encrypted():
+    r = sh("git", "config", "--get", "filter.dsvault.clean", check=False)
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def _decrypt_extracted(dest, sub):
+    """`git archive` does not run smudge filters, so decrypt the extracted files ourselves."""
+    import vault_crypt
+    root = os.path.join(dest, sub)
+    if not os.path.isdir(root):
+        return
+    has = any(open(os.path.join(r, f), "rb").read(4) == vault_crypt.MAGIC for r, _, fs in os.walk(root) for f in fs)
+    if has:
+        vault_crypt.decrypt_tree(root, vault_crypt.load_key(), prefix=sub.rstrip("/") + "/")
+
+
 def _extract(rev, sub, dest):
     import tarfile, io
     p = subprocess.run(["git", "archive", rev, sub], cwd=VAULT, capture_output=True)
     if p.returncode != 0:
         return False
-    tarfile.open(fileobj=io.BytesIO(p.stdout)).extractall(dest)
+    _untar(io.BytesIO(p.stdout), dest)
+    _decrypt_extracted(dest, sub)
     return True
 
 
@@ -242,6 +278,7 @@ def summary():
             h, ct, subj = c.split("|", 2)
             out["last_commit"] = {"rev": h, "t": int(ct), "age_s": int(time.time() - int(ct)), "subject": subj}
         out["commits"] = len(revs(1000))
+        out["encrypted"] = is_encrypted()
         mp = os.path.join(VAULT, ".manifest.json")
         if os.path.exists(mp):
             out["roots"] = json.load(open(mp))["roots"]
@@ -250,7 +287,9 @@ def summary():
     pj = VAULT + ".push.json"
     out["push"] = json.load(open(pj)) if os.path.exists(pj) else None
     for key, path in (("guard", "evidence/guard.json"), ("containment", "evidence/containment.json"),
-                      ("recovery", "evidence/recovery_report.json")):
+                      ("recovery", "evidence/recovery_report.json"),
+                      ("selfguard", "evidence/selfguard.json"),
+                      ("classification", "evidence/ransom_class.json")):
         if os.path.exists(path):
             try:
                 out[key] = json.load(open(path))
@@ -261,13 +300,42 @@ def summary():
     return out
 
 
+def encrypt_on():
+    """Turn on encryption at rest for everything stored in git (and so everything pushed away)."""
+    import vault_crypt
+    if not os.path.isdir(os.path.join(VAULT, ".git")):
+        os.makedirs(VAULT, exist_ok=True)
+        init(".")
+    kp = os.path.abspath(vault_crypt.make_key())
+    py = sys.executable
+    script = os.path.join(HERE, "vault_crypt.py")
+    env = "VAULT_KEY_FILE=%s " % shlex_quote(kp)
+    sh("git", "config", "filter.dsvault.clean", "%s%s %s clean %%f" % (env, shlex_quote(py), shlex_quote(script)))
+    sh("git", "config", "filter.dsvault.smudge", "%s%s %s smudge %%f" % (env, shlex_quote(py), shlex_quote(script)))
+    sh("git", "config", "filter.dsvault.required", "true")
+    with open(os.path.join(VAULT, ".gitattributes"), "w") as f:
+        f.write("files/** filter=dsvault\n")
+    print("VAULT_ENCRYPTION_ON key=%s  (BACK THIS FILE UP somewhere else; without it the vault cannot be read)" % kp)
+
+
+def shlex_quote(x):
+    import shlex
+    return shlex.quote(x)
+
+
 def push():
-    r = sh("git", "push", "-q", "origin", "HEAD:main", "--force", check=False)
+    """Append-only push: never forces. If the remote refuses (history differs, for example after a re-init),
+    the snapshot goes to a NEW branch vault-<time>, so nothing already stored can be overwritten."""
+    r = sh("git", "push", "-q", "origin", "HEAD:main", check=False)
+    branch = "main"
+    if r.returncode != 0 and any(w in r.stderr for w in ("rejected", "non-fast-forward", "fetch first", "denied")):
+        branch = "vault-" + time.strftime("%Y%m%d-%H%M%S")
+        r = sh("git", "push", "-q", "origin", "HEAD:refs/heads/" + branch, check=False)
     ok = r.returncode == 0
     rev = sh("git", "rev-parse", "--short", "HEAD", check=False).stdout.strip()
     with open(VAULT + ".push.json", "w") as f:
-        json.dump({"t": time.time(), "ok": ok, "rev": rev, "err": "" if ok else r.stderr.strip()[:200]}, f)
-    print("VAULT_PUSHED rev=%s (off-machine copy updated)" % rev if ok else "VAULT_PUSH_FAILED " + r.stderr.strip()[:200], flush=True)
+        json.dump({"t": time.time(), "ok": ok, "rev": rev, "branch": branch, "err": "" if ok else r.stderr.strip()[:200]}, f)
+    print("VAULT_PUSHED rev=%s branch=%s (off-machine copy updated)" % (rev, branch) if ok else "VAULT_PUSH_FAILED " + r.stderr.strip()[:200], flush=True)
     return ok
 
 
@@ -278,11 +346,20 @@ def restore(target, rev="HEAD", root=None):
     proc = subprocess.run(["git", "archive", rev, sub], cwd=VAULT,
                            capture_output=True)
     if proc.returncode != 0:
-        print("VAULT_RESTORE_FAIL", "revision not found:", rev)
+        print("VAULT_RESTORE_FAIL", "cannot read snapshot %s (revision missing, or the encryption key is missing/wrong)" % rev)
         return False
     os.makedirs(target, exist_ok=True)
-    tar = tarfile.open(fileobj=io.BytesIO(proc.stdout))
-    tar.extractall(target)
+    _untar(io.BytesIO(proc.stdout), target)
+    try:
+        _decrypt_extracted(target, sub)
+    except SystemExit as e:                       # key missing or wrong: fail closed, say why
+        print("VAULT_RESTORE_FAIL", e)
+        shutil.rmtree(os.path.join(target, "files"), ignore_errors=True)
+        return False
+    except Exception as e:
+        print("VAULT_RESTORE_FAIL decryption error:", type(e).__name__)
+        shutil.rmtree(os.path.join(target, "files"), ignore_errors=True)
+        return False
     inner = os.path.join(target, sub)
     if os.path.isdir(inner):
         for name in os.listdir(inner):
@@ -312,7 +389,7 @@ def prune(keep=20):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["init", "commit", "push", "restore", "log", "prune", "status", "freeze", "unfreeze", "verify", "fsck", "summary"])
+    ap.add_argument("cmd", choices=["init", "commit", "push", "restore", "log", "prune", "status", "freeze", "unfreeze", "verify", "fsck", "summary", "encrypt-on"])
     ap.add_argument("folder", nargs="?")
     ap.add_argument("--remote")
     ap.add_argument("--rev", default="HEAD")
@@ -338,6 +415,8 @@ if __name__ == "__main__":
         sys.exit(0 if fsck() else 1)
     elif a.cmd == "summary":
         print(json.dumps(summary()))
+    elif a.cmd == "encrypt-on":
+        encrypt_on()
     elif a.cmd == "status":
         status()
     elif a.cmd == "freeze":

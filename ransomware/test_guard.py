@@ -52,6 +52,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="dsguard_")
     work = os.path.join(tmp, "ransomware")
     shutil.copytree(HERE, work, ignore=shutil.ignore_patterns("data", "baseline.json", "__pycache__", "evidence"))
+    os.makedirs(os.path.join(tmp, "multi"), exist_ok=True); shutil.copy(os.path.join(os.path.join(HERE, ".."), "multi", "shield_os.py"), os.path.join(tmp, "multi"))   # v10: the OS layer sits next to ransomware/
     os.chdir(work)
     make_sample()
     # step 7: two roots, one extra root with excluded and oversized files
@@ -65,8 +66,10 @@ def main():
         {"name": "docs", "path": "data/docs", "exclude": ["*.tmp"], "max_mb": 1}],
         "debounce_s": 1, "max_wait_s": 10, "gate_threshold": 3, "release_after_s": 60,
         "kill": True, "contain": "dry", "allow": ["10.0.0.2"],
-        "remote": os.path.join(tmp, "offsite.git")}
-    subprocess.run(["git", "init", "-q", "--bare", cfg["remote"]], check=True)
+        "remote": os.path.join(tmp, "offsite.git"), "encrypt": True}
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", cfg["remote"]], check=True)
+    for k in ("receive.denyNonFastForwards", "receive.denyDeletes"):          # what multi/make_vault_remote.sh sets
+        subprocess.run(["git", "--git-dir", cfg["remote"], "config", k, "true"], check=True)
     json.dump(cfg, open("protect.json", "w"))
     clean = tree_hash("data/sample")
 
@@ -121,6 +124,29 @@ def main():
     check("recovered folder identical to clean data", tree_hash("data/sample_copy") == clean)
     check("encrypted folder kept as evidence", any(n.startswith("sample_copy.encrypted-") for n in os.listdir("data")))
     check("recovery report written", json.load(open("evidence/recovery_report.json"))["ok"])
+    # encryption at rest + append-only remote
+    blob = subprocess.run(["git", "--git-dir", cfg["remote"], "show", "main:files/sample/log1.txt"], capture_output=True).stdout
+    check("remote holds ciphertext, not plain text", blob.startswith(b"DSV1") and b"event" not in blob and b"host1" not in blob)
+    check("local vault object is encrypted too", subprocess.run("git cat-file -p HEAD~1:files/sample/log1.txt | head -c 4", shell=True, cwd="data/vault", capture_output=True).stdout == b"DSV1")
+    sm = json.loads(subprocess.run([sys.executable, "vault.py", "summary"], capture_output=True, text=True).stdout)
+    check("summary reports encryption", sm.get("encrypted") is True)
+    # disaster recovery on a fresh machine: clone the remote (no git config, no filter), key from the backup
+    open("other.key", "w").write("00" * 31 + "aa\n")
+    subprocess.run("rm -rf data/vault && git clone -q -b main %s data/vault" % cfg["remote"], shell=True)
+    bad = subprocess.run([sys.executable, "vault.py", "restore", "data/wrongkey", "--root", "sample"], capture_output=True, text=True, env=dict(os.environ, VAULT_KEY_FILE="other.key"))
+    check("wrong key cannot restore (fails closed)", bad.returncode != 0 and not os.path.isdir("data/wrongkey/files"), bad.stdout.strip()[-70:])
+    good = subprocess.run([sys.executable, "vault.py", "restore", "data/fromremote", "--root", "sample"], capture_output=True, text=True)
+    check("fresh clone + key backup restores the clean data", good.returncode == 0 and tree_hash("data/fromremote") == clean, good.stdout.strip()[-60:])
+    check("vault verify works on the fresh clone", subprocess.run([sys.executable, "vault.py", "verify"], capture_output=True).returncode == 0)
+    subprocess.run([sys.executable, "vault.py", "unfreeze"], capture_output=True)
+    before = subprocess.run(["git", "--git-dir", cfg["remote"], "rev-list", "--count", "main"], capture_output=True, text=True).stdout.strip()
+    subprocess.run("rm -rf data/vault data/vault.push.json", shell=True)                    # someone starts a fresh, unrelated vault
+    subprocess.run([sys.executable, "vault.py", "init", "data/sample", "--remote", cfg["remote"]], capture_output=True)
+    subprocess.run([sys.executable, "vault.py", "commit", "data/sample"], capture_output=True)
+    subprocess.run([sys.executable, "vault.py", "push"], capture_output=True)
+    after = subprocess.run(["git", "--git-dir", cfg["remote"], "rev-list", "--count", "main"], capture_output=True, text=True).stdout.strip()
+    branches = subprocess.run(["git", "--git-dir", cfg["remote"], "branch", "--list"], capture_output=True, text=True).stdout
+    check("push never overwrites: old history intact, new data on a new branch", before == after and "vault-" in branches, branches.split())
     subprocess.run([sys.executable, "vault.py", "unfreeze"], capture_output=True)
     check("unfreeze", not os.path.exists("data/vault.frozen"))
     shutil.rmtree(tmp, ignore_errors=True)

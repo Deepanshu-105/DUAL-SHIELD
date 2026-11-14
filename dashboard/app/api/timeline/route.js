@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
@@ -10,6 +11,7 @@ function containerLines(name, file) {
 }
 
 export async function GET() {
+  await connection();   // never prerendered or cached at build time: always live data
   const ev = [];
   // Layer 2: ransomware detector (host file)
   let text = "";

@@ -1,21 +1,21 @@
 #!/bin/bash
-# Starts the lab: chain, contract, containers, parser. Dashboard is started separately.
+# Single-machine lab (Docker containers for target, peer, attacker) on Hyperledger Fabric. No gas, no Hardhat.
+# Fabric itself runs natively on this machine (fabric/deploy/network.sh); the containers reach the gateway at host.docker.internal:8600.
+# Dashboard is started separately. Needs once: fabric/deploy/install_fabric.sh, and npm install --omit=dev in fabric/chaincode/cityshield and fabric/gateway.
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-rpc() { curl -s -X POST -H 'Content-Type: application/json' \
-  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://127.0.0.1:8545 | grep -q result; }
-cd "$ROOT/blockchain" || exit 1
-if ! rpc; then
-  echo "starting hardhat node..."
-  nohup npx hardhat node --hostname 0.0.0.0 > /tmp/hardhat.log 2>&1 &
-  for i in $(seq 1 30); do sleep 1; rpc && break; done
-fi
-rpc || { echo "FAIL: chain not reachable"; exit 1; }
-npx hardhat run scripts/deploy.js --network localhost || { echo "FAIL: deploy"; exit 1; }
-cd "$ROOT"
-cp deployments/localhost.json dashboard/public/localhost.json
-docker compose rm -sf peer >/dev/null 2>&1   # fresh peer avoids stale localhost.json mount
+FAB="$ROOT/fabric"
+[ -x "$FAB/bin/peer" ] || { echo "Run once: fabric/deploy/install_fabric.sh (and npm install --omit=dev in fabric/chaincode/cityshield and fabric/gateway)"; exit 1; }
+"$FAB/deploy/network.sh" up || { echo "FAIL: Fabric network"; exit 1; }
+pkill -f "fabric/gateway/server.js" 2>/dev/null; sleep 1
+nohup env GATEWAY_PORT=8600 GATEWAY_HOST=0.0.0.0 GATEWAY_LAB=1 node "$FAB/gateway/server.js" > /tmp/fabric_gateway.out 2>&1 &
+export GATEWAY_URL=http://127.0.0.1:8600
+PY="$ROOT/blockchain/.venv/bin/python3"; [ -x "$PY" ] || PY=python3
+export PYTHONPATH="$ROOT/network"
+for i in $(seq 1 40); do "$PY" -c "from chainlib import Chain; Chain().head()" 2>/dev/null && break; sleep 1; done
+"$PY" "$ROOT/network/chain_setup.py" --approve || { echo "FAIL: node approval"; exit 1; }
+"$PY" "$ROOT/network/chain_setup.py" --register 1 && "$PY" "$ROOT/network/chain_setup.py" --register 2
+unset GATEWAY_URL PYTHONPATH
 docker compose up -d --build
-docker cp deployments/localhost.json target:/opt/shield/localhost.json
 docker compose up -d --force-recreate peer >/dev/null 2>&1
 docker exec target pkill -f ssh_parser.py 2>/dev/null
 docker exec -d -e COREPORT=1 target sh -c "cd /root/detector && python3 -u ssh_parser.py >> /var/log/parser.out 2>&1"
@@ -28,10 +28,7 @@ docker exec attacker sh -c "which pkill >/dev/null && which python3 >/dev/null |
 # demo sample folder and detector baseline (git-ignored, created once on a fresh clone)
 "$ROOT/ransomware/setup_sample.sh" >/dev/null 2>&1 || echo "WARN: ransomware sample setup failed (pip install watchdog cryptography?)"
 
-# demo sample folder and detector baseline (git-ignored, created once on a fresh clone)
-"$ROOT/ransomware/setup_sample.sh" >/dev/null 2>&1 || echo "WARN: ransomware sample setup failed (pip install watchdog cryptography?)"
+# anchor the clean snapshot on the Fabric ledger (the dashboard rollback checks it)
+GATEWAY_URL=http://127.0.0.1:8600 "$ROOT/blockchain/scripts/anchor_clean.sh" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback button will say ANCHOR_MISSING)"
 
-# anchor the clean snapshot on the fresh chain (the dashboard rollback checks it)
-"$ROOT/blockchain/scripts/anchor_clean.sh" >/dev/null 2>&1 || echo "WARN: clean-state anchor failed (rollback button will say ANCHOR_MISSING)"
-
-echo "LAB READY. Start the dashboard in another terminal: cd dashboard && npm run dev"
+echo "LAB READY (Hyperledger Fabric). Start the dashboard in another terminal: cd dashboard && npm run dev"

@@ -22,7 +22,7 @@ Everything below is in `multi/`. T and P run directly on the laptop (as root), n
   3. In PowerShell as Administrator: `wsl --shutdown`, then
      `Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow`
   4. Allow the ports in Windows Firewall (PowerShell as Administrator):
-     `New-NetFirewallRule -DisplayName DualShield -Direction Inbound -Protocol TCP -LocalPort 22,3000,8545,8800 -Action Allow`
+     `New-NetFirewallRule -DisplayName DualShield -Direction Inbound -Protocol TCP -LocalPort 22,3000,8600,8800 -Action Allow`
   5. Open WSL again: `hostname -I` should now show the Windows LAN address.
   Do NOT use `netsh interface portproxy` for T: it hides the attacker's address, so the wrong address would be blocked.
 - Clocks: the timeline compares timestamps from different laptops. Run `w32tm /resync` in Administrator PowerShell, then `sudo hwclock -s` in WSL, on every laptop.

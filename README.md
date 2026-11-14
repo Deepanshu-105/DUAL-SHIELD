@@ -14,7 +14,8 @@ Everything runs in an isolated lab on one machine (Docker network 172.30.0.0/24)
 (`ransomware/mock_crypto.py`) that only touches copies. Never point any of this at a real network or real files.
 
 ## What you need
-Ubuntu (WSL2 on Windows works), Docker with Compose, Node.js 20, Python 3.10 or newer, git.
+Ubuntu (WSL2 on Windows works), Node.js 22, Python 3.10 or newer, git. Docker only for the single-machine container lab (`start_lab.sh`).
+The ledger is Hyperledger Fabric (see README_FABRIC.md); there is no Hardhat and no gas.
 Internet access is needed on the first run (Docker images and `apt`).
 
 ## First-time setup (once)
@@ -22,20 +23,21 @@ Internet access is needed on the first run (Docker images and `apt`).
 git clone https://github.com/Deepanshu-105/DUAL-SHIELD.git
 cd DUAL-SHIELD
 
-# Python for the blockchain scripts
+# Python environment (standard library does the chain work; no web3)
 python3 -m venv blockchain/.venv
-blockchain/.venv/bin/pip install web3
 
 # Python for the ransomware demo (outside any virtualenv)
 pip install watchdog cryptography      # add --break-system-packages if pip asks for it
 
 # Node packages
-(cd blockchain && npm install)
+fabric/deploy/install_fabric.sh                         # Fabric 2.5 binaries, no Docker
+(cd fabric/chaincode/cityshield && npm install --omit=dev)
+(cd fabric/gateway && npm install --omit=dev)
 (cd dashboard && npm install)
 ```
 ## Requirements
 - Node.js 22 or later (`nvm install 22 && nvm use 22`)
-- Docker and Docker Compose
+- Docker and Docker Compose (only for start_lab.sh)
 - Python 3.10+
 
 ## Run the demo

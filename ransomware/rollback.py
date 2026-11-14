@@ -30,7 +30,7 @@ def hash_folder(folder):
     for root, _, names in os.walk(folder):
         for n in names:
             p = os.path.join(root, n)
-            out[os.path.relpath(p, folder)] = sha256(p)
+            out[os.path.relpath(p, folder).replace(os.sep, "/")] = sha256(p)
     return out
 
 

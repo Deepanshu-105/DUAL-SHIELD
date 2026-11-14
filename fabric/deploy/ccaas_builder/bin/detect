@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fabric external builder: use this builder only for chaincode packages of type "ccaas" (chaincode as a service).
+META="$2/metadata.json"
+[ -f "$META" ] && grep -q '"type"[[:space:]]*:[[:space:]]*"ccaas"' "$META"

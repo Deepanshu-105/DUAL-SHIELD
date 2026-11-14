@@ -3,7 +3,7 @@
 ## Data flow
 1. SSH log (target:/var/log/auth.log) is read by detector/ssh_parser.py, which adds the IP to the ipset `city_blacklist`
    and writes target:/var/log/parser_block.log and metrics.log.
-2. network/chain_report.py reports the IP to the CityShield contract (Hardhat chain, 127.0.0.1:8545).
+2. network/chain_report.py reports the IP to the CityShield chaincode (Hyperledger Fabric, through the gateway, port 8600).
 3. The contract emits ThreatConsensusReached when 2 nodes reported the same IP.
 4. The peer container (network/listener.py) polls the chain by block number, blocks the IP in its own ipset and writes
    peer:/var/log/peer_block.log.
@@ -15,7 +15,7 @@
 ## Dashboard interfaces (dashboard/app)
 | Endpoint | Reads | Used for |
 |---|---|---|
-| (browser, ethers) 127.0.0.1:8545 | contract events and tally, stakes | node cards, consensus tally |
+| /api/chain (server, Fabric gateway) | chaincode events and tally, stakes | node cards, consensus tally |
 | /api/detector | ransomware/evidence/watch.log | files flagged, kills |
 | /api/blocked | docker exec ... ipset list city_blacklist (target, peer) | blocked IP tiles |
 | /api/timeline | watch.log plus parser_block.log and peer_block.log | event timeline |

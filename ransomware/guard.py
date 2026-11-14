@@ -14,14 +14,19 @@ Step 7  wider coverage: any number of roots, with exclude patterns and a size ca
 """
 import json, os, sys, threading, time
 
-import detect, vault, containment
+import classify, detect, vault, containment
 
 DEFAULTS = {"debounce_s": 2.0, "max_wait_s": 30.0, "gate_threshold": 3,
             "release_after_s": 60.0, "kill": True, "contain": "dry", "allow": [],
             "remote": "",
+            "encrypt": False,       # True: vault content is AES-256-GCM encrypted in git and on the remote
             "canary": False,        # decoy files in every root: touching one = instant kill (catches slow ransomware)
             "burst_files": 0,       # 0 = off. N = freeze+contain if N distinct files change within burst_window_s
-            "burst_window_s": 5.0}      # remote: a git URL or path; every commit is pushed there (off-machine copy)
+            "burst_window_s": 5.0,
+            "delete_threshold": 10,   # 0 = off. Deleting >= this many files (and >= 25% of the folder) in one batch = wiper: gate trips
+            "exfil": False,           # watch outbound bytes (Linux /proc/net/dev) for data theft before encryption
+            "exfil_min_mbps": 2.0,    # ...above this many MB/s AND far above this machine's own normal
+            "exfil_contain": False}   # True: block egress on any exfil alarm; False: only when archives were also staged or files are damaged      # remote: a git URL or path; every commit is pushed there (off-machine copy)
 
 
 def load_config(path):
@@ -48,6 +53,10 @@ class Guard:
         self.started = time.time()
         self.canaries = {}             # abs path -> (root name, rel)
         self.burst = []                # (ts, path) of recent modifications
+        self.exfil = None              # last outbound-transfer alarm
+        self.verdict = None            # last attack-type verdict (classify.verdict)
+        self._vsig = None
+        self.deleted_recent = []       # (ts, rel) of recent deletions
 
     CANARY_FILES = {".~ds_canary_a.docx": "Quarterly budget draft. Do not delete.\n" * 40,
                     ".~ds_canary_b.xlsx": "id,amount,note\n" + "".join("%d,%d,reserved\n" % (i, i * 37) for i in range(80))}
@@ -92,7 +101,8 @@ class Guard:
                 json.dump({"t": time.time(), "started": self.started, "roots": list(self.roots),
                            "debounce_s": self.cfg["debounce_s"], "kill": self.cfg["kill"],
                            "contain": self.cfg["contain"], "held": self.held,
-                           "contained": self.contained, "remote": bool(self.cfg.get("remote"))}, f)
+                           "contained": self.contained, "remote": bool(self.cfg.get("remote")),
+                           "ransom_type": (self.verdict or {}).get("primary")}, f)
             os.replace("evidence/guard.json.tmp", "evidence/guard.json")
         except OSError:
             pass
@@ -107,6 +117,8 @@ class Guard:
         os.makedirs("evidence", exist_ok=True)
         if not os.path.isdir(os.path.join(vault.VAULT, ".git")):
             vault.init(self.cfg["roots"][0]["path"])
+        if self.cfg.get("encrypt"):
+            vault.encrypt_on()
         if self.cfg.get("remote"):
             vault.init(self.cfg["roots"][0]["path"], self.cfg["remote"])
         if vault.is_frozen():
@@ -122,16 +134,68 @@ class Guard:
         return True
 
     def scan(self):
-        """name -> {rel: check letter} for live files that differ suspiciously."""
+        """name -> {rel: check letter} for live files that differ suspiciously (A header, B looks encrypted, W wiped).
+        Also keeps the full evidence (self.ev) that attack-type classification uses."""
+        self.ev = classify.gather(self.cfg["roots"], self.base)
         out = {}
-        for name, r in self.roots.items():
-            if not os.path.isdir(r["path"]):
-                continue
-            for p, rel in detect.all_files(r["path"]):
-                chk, _ = detect.check_file(p, rel, self.base.get(name, {}))
-                if chk:
-                    out.setdefault(name, {})[rel] = chk
+        for key, chk in self.ev["enc"].items():
+            name, rel = key.split("/", 1)
+            out.setdefault(name, {})[rel] = chk
+        for key in self.ev["wiped"]:
+            name, rel = key.split("/", 1)
+            out.setdefault(name, {})[rel] = "W"
         return out
+
+    def exfil_recent(self):
+        e = self.exfil
+        return e if e and time.time() - e["t"] <= 120 else None
+
+    def assess(self, announce=True):
+        """Work out WHICH kind of attack this is; write evidence/ransom_class.json and print RANSOM_TYPE when it changes."""
+        ev = getattr(self, "ev", None)
+        if ev is None:
+            return None
+        v = classify.verdict(ev, self.exfil_recent(), delete_min=self.cfg["delete_threshold"] or 10)
+        self.verdict = v if v["types"] else None
+        if not v["types"]:
+            self._vsig = None
+            return None
+        sig = (v["primary"], tuple(t["type"] for t in v["types"]), v["counts"]["encrypted"] > 0, v["family_hint"])
+        if announce and sig != self._vsig:
+            self._vsig = sig
+            print("%.3f RANSOM_TYPE %s [%s]%s%s  %s" % (
+                time.time(), v["primary"], v["types"][0]["confidence"],
+                (" mode=" + v["mode"]) if v["mode"] else "", (" family-hint=" + v["family_hint"]) if v["family_hint"] else "",
+                "; ".join(v["types"][0]["why"])), flush=True)
+            for t in v["types"][1:]:
+                print("%.3f RANSOM_TYPE_ALSO %s [%s]  %s" % (time.time(), t["type"], t["confidence"], "; ".join(t["why"])), flush=True)
+            try:
+                with open("evidence/ransom_class.json.tmp", "w") as f:
+                    json.dump(v, f, indent=1)
+                os.replace("evidence/ransom_class.json.tmp", "evidence/ransom_class.json")
+            except OSError:
+                pass
+        return v
+
+    def on_exfil(self, ev):
+        self.exfil = ev
+        print("%.3f EXFIL_SUSPECTED outbound %.1f MB/s (%s)" % (ev["t"], ev["rate_mbps"], ev["why"]), flush=True)
+        self.scan()
+        v = self.assess()
+        staged = bool(self.ev["archives"])
+        if (self.cfg.get("exfil_contain") or staged or (v and v["primary"] in ("crypto", "wiper", "double_extortion"))) and not self.contained:
+            self._contain("outbound transfer %.1f MB/s%s" % (ev["rate_mbps"], " with archives staged" if staged else ""), [a["file"] for a in self.ev["archives"]][:10])
+
+    def _exfil_loop(self):
+        w = classify.ExfilWatch(min_mbps=self.cfg["exfil_min_mbps"])
+        while True:
+            time.sleep(1.0)
+            tx = classify.tx_total()
+            if tx is None:
+                return
+            e = w.feed(time.time(), tx)
+            if e and not self.exfil_recent():
+                self.on_exfil(e)
 
     def gated_commit(self, label="auto"):
         with self.lock:
@@ -140,18 +204,30 @@ class Guard:
             flagged = self.scan()
             now = time.time()
             n = sum(len(v) for v in flagged.values())
-            if n >= self.cfg["gate_threshold"]:
-                names = ["%s/%s" % (k, rel) for k, v in flagged.items() for rel in v]
-                print("GATE_TRIPPED %d suspicious files, commit skipped" % n, flush=True)
-                self._contain("gate: %d files flagged" % n, names)
+            dt = self.cfg["delete_threshold"]
+            deleted = self.ev["deleted"]
+            mass_delete = bool(dt) and len(deleted) >= max(dt, -(-self.ev["total"] // 4))
+            self.assess()
+            if n >= self.cfg["gate_threshold"] or mass_delete:
+                names = ["%s/%s" % (k, rel) for k, v in flagged.items() for rel in v] or deleted[:20]
+                print("GATE_TRIPPED %s, commit skipped" % ("%d suspicious files" % n if n >= self.cfg["gate_threshold"] else "%d files deleted at once" % len(deleted)), flush=True)
+                self._contain("gate: %d files flagged, %d deleted" % (n, len(deleted)), names)
+                if self.rules:                                   # v13.3: the gate is proof enough -> fire the kill rule without waiting for 3 FLAGGED events
+                    def _kill(rel0=(names[0].split("/", 1)[-1] if names else "")):   # own thread: scanning open files can be slow/hang on Windows and must never block the freeze
+                        for _rule in list(self.rules.values()):
+                            try:
+                                _rule.on_flag(rel0, force=True)
+                            except Exception as e:
+                                print("KILL_ERROR %s" % e, flush=True)
+                    threading.Thread(target=_kill, daemon=True).start()
                 return None
             hold = {}
             for name, files in flagged.items():
                 for rel, chk in files.items():
                     first = self.held_since.setdefault((name, rel), now)
-                    # an isolated header-only change (check A) is probably a real edit:
+                    # an isolated header-only change (check A) or emptied file (W) is probably a real edit:
                     # accept it after release_after_s. Check B (looks encrypted) never is.
-                    if chk == "A" and now - first >= self.cfg["release_after_s"]:
+                    if chk in ("A", "W") and now - first >= self.cfg["release_after_s"]:
                         print("GATE_RELEASED %s/%s (isolated header change)" % (name, rel))
                         continue
                     hold.setdefault(name, set()).add(rel)
@@ -170,6 +246,11 @@ class Guard:
         if self.contained:
             return
         self.contained = True
+        try:
+            self.scan()             # the freeze below stops later commits, so name the attack type now
+            self.assess()
+        except Exception as e:      # never let classification get in the way of containment
+            print("ASSESS_ERROR %s" % e, flush=True)
         containment.contain(self.cfg["contain"], self.cfg["allow"], reason, files)
 
     # ---- events ------------------------------------------------------------
@@ -213,15 +294,31 @@ class Guard:
                     if ev.is_directory:
                         return
                     rel = os.path.relpath(ev.src_path, root)
-                    chk, detail = detect.check_file(ev.src_path, rel, g.base.get(name, {}))
+                    b = g.base.get(name, {})
+                    if rel in b and detect.is_wiped(ev.src_path, b[rel]):
+                        return g.on_flag(name, rel, "W", "emptied or overwritten with filler")
+                    chk, detail = detect.check_file(ev.src_path, rel, b)
                     if chk:
                         g.on_flag(name, rel, chk, detail)
+                def on_deleted(self, ev):
+                    dt = g.cfg["delete_threshold"]
+                    if ev.is_directory or not dt:
+                        return
+                    rel = os.path.relpath(ev.src_path, root)
+                    if rel not in g.base.get(name, {}) or os.path.basename(rel).startswith(".~ds_"):
+                        return
+                    now = time.time()
+                    g.deleted_recent = [(t, r) for t, r in g.deleted_recent if now - t <= 10] + [(now, rel)]
+                    if len(g.deleted_recent) >= dt:          # a burst of deletions: count them as wipe flags for the kill rule
+                        g.on_flag(name, rel, "W", "deleted (%d files in 10 s)" % len(g.deleted_recent))
             return H()
 
         obs = Observer()
         for name, r in self.roots.items():
             obs.schedule(handler(name, r["path"]), r["path"], recursive=True)
         obs.start()
+        if self.cfg.get("exfil"):
+            threading.Thread(target=self._exfil_loop, daemon=True).start()
         print("GUARD_ON roots=%s debounce=%ss kill=%s contain=%s" % (
             list(self.roots), self.cfg["debounce_s"], self.cfg["kill"], self.cfg["contain"]), flush=True)
         try:

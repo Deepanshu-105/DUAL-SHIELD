@@ -44,9 +44,9 @@ for i in range(16):
     ev += a.feed(1000 + i * 20, "203.0.113.%d" % (i % 4 + 1), "admin", False)
 check("distributed guessing caught on every source", len([e for e in ev if e[0] == "distributed-guess"]) == 4, kinds(ev))
 a = LoginAnalyzer()
-a.feed(1000, "198.51.100.7", "amy", False)
-a.feed(1010, "198.51.100.7", "amy", False)
-check("successful login after failures flagged", kinds(a.feed(1020, "198.51.100.7", "amy", True)) == ["login-after-fails"])
+for i in range(4):
+    a.feed(1000 + i * 10, "198.51.100.7", "amy", False)
+check("successful login after failures flagged", kinds(a.feed(1050, "198.51.100.7", "amy", True)) == ["login-after-fails"])
 a = LoginAnalyzer(allow_ips={"10.0.0.5"}, tor={"185.220.101.1"})
 check("login from outside allow-list / Tor flagged",
       kinds(a.feed(1000, "185.220.101.1", "amy", True)) == ["login-from-tor", "login-unexpected"])
@@ -101,6 +101,7 @@ check("flagged sensor is quarantined locally", "s3" in g.quarantined)
 tmp = tempfile.mkdtemp(prefix="dscan_")
 work = os.path.join(tmp, "ransomware")
 shutil.copytree(os.path.join(ROOT, "ransomware"), work, ignore=shutil.ignore_patterns("data", "evidence", "__pycache__", "baseline.json"))
+os.makedirs(os.path.join(tmp, "multi"), exist_ok=True); shutil.copy(os.path.join(ROOT, "multi", "shield_os.py"), os.path.join(tmp, "multi"))   # v10: the OS layer sits next to ransomware/
 os.chdir(work)
 os.makedirs("data/docs")
 for i in range(6):

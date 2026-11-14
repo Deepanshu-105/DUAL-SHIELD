@@ -1,7 +1,9 @@
+import { connection } from "next/server";
 import { execSync } from "child_process";
 import { MULTI, agent } from "../../../lib/agent.js";
 
 export async function GET() {
+  await connection();   // never prerendered or cached at build time: always live data
   const out = {};
   for (const n of ["target", "peer"]) {
     try {

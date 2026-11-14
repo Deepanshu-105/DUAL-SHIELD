@@ -2,7 +2,9 @@
 """Signed call to a Dual-Shield agent from a shell (stdlib only).
    multi/agent_call.py T|P METHOD /path [json-body]     secrets and addresses come from multi/config.env
 Verifies the signed answer and prints the JSON. Exit 0 if the answer was authentic, 2 if not, 1 if unreachable."""
-import hashlib, hmac, json, os, secrets, sys, time, urllib.request, urllib.error
+import hashlib, hmac, json, os, secrets, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tlsutil
 
 def cfg():
     d = {}
@@ -21,18 +23,16 @@ def main():
     who, method, path = sys.argv[1], sys.argv[2], sys.argv[3]
     body = (sys.argv[4] if len(sys.argv) > 4 else "").encode()
     c = cfg()
+    os.environ.setdefault("TLS", c.get("TLS", "0"))
     secret = c.get("AGENT_SECRET_" + who, "")
     if len(secret) < 16:
         sys.exit("AGENT_SECRET_%s not set in multi/config.env" % who)
     ts, nonce = str(int(time.time())), secrets.token_hex(16)
-    req = urllib.request.Request("http://%s:%s%s" % (c[who + "_IP"], os.environ.get("AGENT_PORT", "8800"), path), data=body or None, method=method, headers={
-        "X-Ts": ts, "X-Nonce": nonce, "X-Sig": sig(secret, method, path, ts, nonce, hashlib.sha256(body).hexdigest()),
-        "content-type": "application/json"})
+    base = "%s://%s:%s" % ("https" if tlsutil.enabled() else "http", c[who + "_IP"], c.get(who + "_AGENT_PORT") or os.environ.get("AGENT_PORT", "8800"))
+    hdrs = {"X-Ts": ts, "X-Nonce": nonce, "X-Sig": sig(secret, method, path, ts, nonce, hashlib.sha256(body).hexdigest()), "content-type": "application/json"}
     try:
-        r = urllib.request.urlopen(req, timeout=int(os.environ.get("AGENT_CALL_TIMEOUT", "5")))
-        code, raw, hdr = r.status, r.read(), r.headers
-    except urllib.error.HTTPError as e:
-        code, raw, hdr = e.code, e.read(), e.headers
+        code, raw, hdr = tlsutil.request(base, method, path, hdrs, body or None, expect_cn="dualshield-" + ("target" if who == "T" else "peer"),
+                                         timeout=int(os.environ.get("AGENT_CALL_TIMEOUT", "5")))
     except OSError as e:
         print("unreachable: %s" % e); sys.exit(1)
     want = sig(secret, nonce, str(code), hashlib.sha256(raw).hexdigest())

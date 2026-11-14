@@ -1,8 +1,10 @@
+import { connection } from "next/server";
 import fs from "fs";
 import path from "path";
 import { MULTI, agentLog } from "../../../lib/agent.js";
 
 export async function GET() {
+  await connection();   // never prerendered or cached at build time: always live data
   let text = "";
   if (MULTI) {
     text = (await agentLog("target", "watch", 500)).join("\n");   // watch.log lives on laptop T
