@@ -24,11 +24,51 @@ export const safeEq = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));   // equ
 
 export function configured() { return String(process.env.DASH_PASS || "").length >= 8; }
 
+// roles: admin (everything), operator (Layer 2 actions and the demo, but no governance, no audit log), viewer (read only)
 export function checkPassword(given) {
-  const admin = process.env.DASH_PASS || "", view = process.env.DASH_VIEW_PASS || "";
+  const admin = process.env.DASH_PASS || "", view = process.env.DASH_VIEW_PASS || "", op = process.env.DASH_OPERATOR_PASS || "";
   const a = admin.length >= 8 && safeEq(given, admin);
-  const v = view.length >= 8 && view !== admin && safeEq(given, view);
-  return a ? "admin" : v ? "viewer" : null;
+  const o = op.length >= 8 && op !== admin && safeEq(given, op);
+  const v = view.length >= 8 && view !== admin && view !== op && safeEq(given, view);
+  return a ? "admin" : o ? "operator" : v ? "viewer" : null;
+}
+
+// ---- v13.4: two-factor sign-in (TOTP, RFC 6238) for admin and operator when DASH_TOTP_SECRET (base32, 16+ chars) is set
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function b32decode(str) {
+  let bits = "", out = [];
+  for (const ch of String(str).toUpperCase().replace(/[^A-Z2-7]/g, "")) bits += B32.indexOf(ch).toString(2).padStart(5, "0");
+  for (let i = 0; i + 8 <= bits.length; i += 8) out.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(out);
+}
+export const totpRequired = (role) => role !== "viewer" && String(process.env.DASH_TOTP_SECRET || "").replace(/[^A-Za-z2-7]/g, "").length >= 16;
+export function totpAt(secret, step) {
+  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(step));
+  const h = crypto.createHmac("sha1", b32decode(secret)).update(msg).digest();
+  const o = h[h.length - 1] & 15;
+  return String(((h[o] & 0x7f) << 24 | h[o + 1] << 16 | h[o + 2] << 8 | h[o + 3]) % 1e6).padStart(6, "0");
+}
+// accepts the current code and one step either side (clock drift); a code that was already used is refused (replay)
+export function checkTotp(code, now = Date.now()) {
+  code = String(code || "").replace(/\s/g, "");
+  if (!/^\d{6}$/.test(code)) return false;
+  const cur = Math.floor(now / 30000);
+  for (const st of [cur, cur - 1, cur + 1]) {
+    if (safeEq(code, totpAt(process.env.DASH_TOTP_SECRET, st))) {
+      if (st <= (S.totpLast || 0)) return false;
+      S.totpLast = st; return true;
+    }
+  }
+  return false;
+}
+
+// ---- v13.4: a password must not cross a network in clear text: sign-in is refused over plain HTTP unless the client is this machine
+//      (or TLS=1: then the dashboard is only reachable through the TLS proxy, or DASH_ALLOW_HTTP=1 for a private lab)
+export function plainHttpRefused(req) {
+  if (process.env.TLS === "1" || process.env.DASH_ALLOW_HTTP === "1") return false;
+  const host = String(req.headers.get("host") || "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  const proto = String(req.headers.get("x-forwarded-proto") || "").split(",")[0].trim();
+  return !(host === "localhost" || host === "127.0.0.1" || host === "::1" || proto === "https");
 }
 
 export function issue(role, prev) {
@@ -47,7 +87,7 @@ export function verify(token) {
   if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return null;
   let t; try { t = JSON.parse(Buffer.from(body, "base64url").toString()); } catch { return null; }
   const now = Math.floor(Date.now() / 1000);
-  if (!t || (t.r !== "admin" && t.r !== "viewer") || now > t.e || now > t.a || isRevoked(t.s)) return null;
+  if (!t || (t.r !== "admin" && t.r !== "operator" && t.r !== "viewer") || now > t.e || now > t.a || isRevoked(t.s)) return null;
   return t;
 }
 // revoked sessions live in a small file, because the proxy and the route handlers may run as separate module instances
@@ -133,7 +173,15 @@ export function audit(action, who, ip, detail) {
     fs.mkdirSync(path.dirname(AUDIT()), { recursive: true });
     fs.appendFileSync(AUDIT(), JSON.stringify(e) + "\n", { mode: 0o600 });
     S.auditPrev = e.h;
+    mirror(JSON.stringify(e));
   } catch {}
+}
+// v13.4: a second copy of every audit line, so deleting the local file does not erase the history.
+//   DASH_AUDIT_MIRROR=/path/on/another/disk-or-share.jsonl     and/or     DASH_AUDIT_WEBHOOK=https://collector/endpoint (POST, one JSON per line)
+function mirror(line) {
+  const f = process.env.DASH_AUDIT_MIRROR, u = process.env.DASH_AUDIT_WEBHOOK;
+  if (f) { try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.appendFileSync(f, line + "\n", { mode: 0o600 }); } catch {} }
+  if (u && /^https?:\/\//.test(u)) { try { fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: line, signal: AbortSignal.timeout(3000) }).catch(() => {}); } catch {} }
 }
 export function readAudit(n = 100) {
   let lines = [];
@@ -149,9 +197,9 @@ export function readAudit(n = 100) {
   return { ok, bad, total: all.length, entries: all.slice(-n).reverse() };
 }
 
-export function securityHeaders(h) {
+export function securityHeaders(h, nonce) {
   const dev = process.env.NODE_ENV !== "production";
-  h.set("Content-Security-Policy", ["default-src 'self'", `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`, "style-src 'self' 'unsafe-inline'",
+  h.set("Content-Security-Policy", ["default-src 'self'", nonce ? `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ""}` : `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`, ...(nonce && !dev ? [`style-src 'self' 'nonce-${nonce}'`, "style-src-attr 'unsafe-inline'"] : ["style-src 'self' 'unsafe-inline'"]),     // v13.5: <style> elements need the nonce; only style="" attributes (no code can run from them) stay open
     "img-src 'self' data:", "font-src 'self' data:", "connect-src 'self'" + (dev ? " ws: wss:" : ""), "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"].join("; "));
   h.set("X-Content-Type-Options", "nosniff");
   h.set("X-Frame-Options", "DENY");
@@ -168,9 +216,11 @@ export function who(req) {
   const t = sessionOf(req);
   return { role: t ? t.r : null, ip: clientIp(req), name: t ? t.r : "-" };
 }
-export function needAdmin(req) {
+export const needAdmin = (req) => needRole(req, ["admin"]);
+export const needOperator = (req) => needRole(req, ["admin", "operator"]);   // Layer 2 actions and the demo
+function needRole(req, roles) {
   const w = who(req);
-  if (w.role !== "admin") { audit("DENIED", w.name, w.ip, req.method + " " + new URL(req.url).pathname); return { w, deny: Response.json({ ok: false, error: "administrator role required" }, { status: 403 }) }; }
+  if (!roles.includes(w.role)) { audit("DENIED", w.name, w.ip, req.method + " " + new URL(req.url).pathname); return { w, deny: Response.json({ ok: false, error: "your role may not do this" }, { status: 403 }) }; }
   if (!sameOrigin(req) || req.headers.get("x-ds-confirm") !== "1") { audit("CSRF_REFUSED", w.name, w.ip, new URL(req.url).pathname); return { w, deny: Response.json({ ok: false, error: "cross-site or unconfirmed request refused" }, { status: 403 }) }; }
   return { w, deny: null };
 }

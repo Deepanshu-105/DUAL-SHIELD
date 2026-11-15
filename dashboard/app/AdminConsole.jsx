@@ -37,6 +37,7 @@ export default function AdminConsole() {
   const [busy, setBusy] = useState("");
   const me = usePoll("/api/auth/me", 15000);
   const admin = me && me.role === "admin";
+  const operator = me && (me.role === "admin" || me.role === "operator");
   const chain = usePoll("/api/chain", 2000);
   const det = usePoll("/api/detector", 1500);
   const blk = usePoll("/api/blocked", 2000);
@@ -105,7 +106,7 @@ export default function AdminConsole() {
           <span className={"pill " + (chain && chain.status === "live" ? "ok" : "bad")}>{chain && chain.status === "live" ? "Fabric chain live" : "chain: " + (chain ? chain.status : "connecting…")}</span>
           <span className={"pill " + (confirmed ? "bad" : "ok")}>Layer 1: {confirmed ? "THREAT CONFIRMED" : "monitoring"}</span>
           <span className={"pill " + (killed ? "bad" : "ok")}>Layer 2: {killed ? "ATTACK STOPPED" : "monitoring"}</span>
-          {!admin && me && <span className="pill mut">read-only</span>}
+          {!operator && me && <span className="pill mut">read-only</span>}
         </div>
 
         {tab === "overview" && <>
@@ -172,12 +173,12 @@ export default function AdminConsole() {
         {tab === "l2" && <>
           <Explain title="Layer 2 · what is implemented">Early-warning canary files and write-rate watch → kill rule finds the process (kernel report on Linux, open files, top writer) and stops it → containment cuts the network (dry or apply) → attack classified (encrypt / wipe / double extortion / data theft / note only) → append-only encrypted vault restores a <b>verified</b> copy (checked against a manifest and the chain anchor). <b>Try it:</b> start the mock ransomware, then recover.</Explain>
           <div className="grid">{l2.length ? l2.map((t) => <Tile key={t.label} {...t} />) : <div className="note">Layer 2 data not available (guard not running or agent not reachable).</div>}</div>
-          <div className="card" style={{ marginTop: 12 }}><h3>Operator actions {admin ? "" : "(administrator only)"}</h3>
+          <div className="card" style={{ marginTop: 12 }}><h3>Operator actions {operator ? "" : "(operator or administrator only)"}</h3>
             <div className="form">
-              <button className="btn danger" disabled={!admin || !!busy} onClick={runRansomware}>▶ Start mock ransomware (demo)</button>
-              <button className="btn" disabled={!admin || !!busy} onClick={rollback}>Roll back to clean state</button>
-              <button className="btn" disabled={!admin || !!busy} onClick={() => recovery("recover")}>Recover from vault</button>
-              <button className="btn ghost" disabled={!admin || !!busy} onClick={() => recovery("unfreeze")}>Unfreeze vault</button>
+              <button className="btn danger" disabled={!operator || !!busy} onClick={runRansomware}>▶ Start mock ransomware (demo)</button>
+              <button className="btn" disabled={!operator || !!busy} onClick={rollback}>Roll back to clean state</button>
+              <button className="btn" disabled={!operator || !!busy} onClick={() => recovery("recover")}>Recover from vault</button>
+              <button className="btn ghost" disabled={!operator || !!busy} onClick={() => recovery("unfreeze")}>Unfreeze vault</button>
             </div>
             {rbOut && <pre className="mono note" style={{ whiteSpace: "pre-wrap" }}>{(rbOut.output || rbOut.error || "").slice(0, 900)}</pre>}
           </div>

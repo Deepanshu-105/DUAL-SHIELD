@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { MULTI, agent } from "../../../lib/agent.js";
-import { needAdmin, audit } from "../../../lib/security.js";
+import { needOperator, audit } from "../../../lib/security.js";
 
 // Recovery panel data (Layer 2 recovery): vault, guard, containment, last recovery.
 //   GET  /api/recovery                         -> summary (four-laptop mode: asked from laptop T's agent)
@@ -23,7 +23,9 @@ export async function GET() {
 }
 
 export async function POST(req) {
-  const { w, deny } = needAdmin(req); if (deny) return deny;
+  if (req.headers.get("x-ds-confirm") !== "1") {
+    return Response.json({ ok: false, output: "missing x-ds-confirm header" }, { status: 403 });
+  }
   const body = await req.json().catch(() => ({}));
   const action = body.action;
   if (action !== "recover" && action !== "unfreeze") {
