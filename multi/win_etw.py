@@ -6,7 +6,8 @@ If ETW is not available the guard silently keeps using the scan (the old path). 
 Event ids of the provider: 12 create (has FileName), 14 set-info, 15 read, 16 write, 19 rename, 26 delete-path, 27 rename-path."""
 import collections, os, threading, time
 GUID = "{EDD08927-9CC4-4E65-B970-C2560FB5C289}"
-KEYWORDS = 0x10 | 0x20 | 0x80 | 0x200 | 0x400 | 0x800 | 0x1000      # filename, fileio, create, write, delete, rename, new file
+KEYWORDS = 0x80 | 0x200 | 0x400 | 0x800 | 0x1000      # create, write, delete-path, rename-path, new file (NOT filename/fileio/op-end: they flood the listener, which then lags behind)
+EVENT_IDS = [12, 14, 16, 19, 26, 27]
 WINDOW = float(os.environ.get("ETW_WINDOW", "5"))
 MIN_OPS = int(os.environ.get("ETW_MIN_OPS", "3"))
 _lock = threading.Lock()
@@ -80,7 +81,10 @@ def start(roots):
         from etw import ETW, ProviderInfo
         from etw.GUID import GUID as G
         prov = ProviderInfo("Microsoft-Windows-Kernel-File", G(GUID), any_keywords=KEYWORDS)
-        _job = ETW(providers=[prov], event_callback=_callback, task_name_filters=None)
+        try:
+            _job = ETW(providers=[prov], event_callback=_callback, event_id_filters=EVENT_IDS)     # filtered inside the library: much less work per second
+        except TypeError:
+            _job = ETW(providers=[prov], event_callback=_callback)
         _job.start(); STATE["running"] = True
         print("ETW_ON kernel file events, writers known within milliseconds", flush=True)
     except Exception as e:
