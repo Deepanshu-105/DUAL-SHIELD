@@ -127,7 +127,7 @@ class Guard:
             print("VAULT_PROTECTED" if ok else "VAULT_EXPOSED  %s  -> run: protect_vault.py lock" % "; ".join(notes), flush=True)
         except Exception as e:
             print("VAULT_STATUS_UNKNOWN %s" % e, flush=True)
-        if os.name == "nt":                   # v13.10: kernel file events (ETW) -> the writer is known at once, kill in milliseconds
+        if os.name == "nt" and os.environ.get("DS_ETW") == "1":                   # v13.10 EXPERIMENTAL (off by default: on the lab laptop the listener lagged behind its own events and found no writer): kernel file events (ETW) -> the writer is known at once, kill in milliseconds
             try:
                 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
                 import win_etw

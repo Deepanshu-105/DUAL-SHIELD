@@ -36,3 +36,8 @@ dashboard/.next/
 gw.log
 ransomware/results/
 ransomware/data/
+gw.log
+ransomware/results/
+ransomware/data/
+etwprobe_dir/
+etw_dump.txt
