@@ -212,7 +212,30 @@ status() {
   done
   query '{"function":"params","Args":[]}' 2>&1 | tail -1
 }
+# v13.6: a new node = a new Fabric identity signed by its organisation's CA (same kind of certificate cryptogen makes for User1/User2).
+#   network.sh add-identity 1|2 Name      e.g.  add-identity 2 Mumbai   ->  Org2MSP:Mumbai@org2.example.com
+add_identity() {
+  local org="$1" name="$2"
+  [[ "$org" =~ ^[12]$ ]] || { echo "organisation must be 1 or 2"; return 1; }
+  [[ "$name" =~ ^[A-Za-z][A-Za-z0-9]{1,15}$ ]] || { echo "name: letters and digits, 2-16 characters, starting with a letter"; return 1; }
+  case "$name" in Admin|User1|User2|peer0) echo "name is reserved"; return 1;; esac
+  local OD="$C/peerOrganizations/org$org.example.com" cn="$name@org$org.example.com"
+  local U="$OD/users/$cn"
+  [ -d "$OD/ca" ] || { echo "network crypto not found in $OD (run network.sh up first)"; return 1; }
+  [ -e "$U" ] && { echo "identity $cn already exists"; return 1; }
+  local cacert cakey; cacert="$(ls "$OD"/ca/*-cert.pem | head -1)"; cakey="$(ls "$OD"/ca/*_sk | head -1)"
+  mkdir -p "$U/msp/signcerts" "$U/msp/keystore" "$U/msp/cacerts" "$U/msp/admincerts"
+  openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null | openssl pkcs8 -topk8 -nocrypt -out "$U/msp/keystore/priv_sk" || return 1
+  chmod 600 "$U/msp/keystore/priv_sk"
+  openssl req -new -key "$U/msp/keystore/priv_sk" -out "$U/node.csr" -subj "/C=US/ST=California/L=San Francisco/OU=client/CN=$cn" || return 1
+  printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' > "$U/ext.cnf"
+  openssl x509 -req -in "$U/node.csr" -CA "$cacert" -CAkey "$cakey" -CAcreateserial -days 3650 -sha256 -extfile "$U/ext.cnf" -out "$U/msp/signcerts/$cn-cert.pem" 2>/dev/null || return 1
+  cp "$cacert" "$U/msp/cacerts/"; [ -f "$OD/msp/config.yaml" ] && cp "$OD/msp/config.yaml" "$U/msp/config.yaml"
+  rm -f "$U/node.csr" "$U/ext.cnf" "$OD"/ca/*.srl
+  echo "IDENTITY_CREATED Org${org}MSP:$cn"
+}
 case "${1:-}" in
+  add-identity) add_identity "${2:-}" "${3:-}" ;;
   up) up ;;
   down) down ;;
   reset) down; rm -rf "$NET"; echo FABRIC_RESET ;;
@@ -221,5 +244,5 @@ case "${1:-}" in
   query) query "$2" ;;
   stop-orderer) kill "$(cat "$NET/pids/$(ord_name "${2:-1}").pid")" && echo "orderer ${2:-1} stopped" ;;      # for failover tests
   start-orderer) start_orderer "${2:-1}" && echo "orderer ${2:-1} started" ;;
-  *) echo "usage: $0 up|down|reset|status|stop-orderer N|start-orderer N"; exit 1 ;;
+  *) echo "usage: $0 up|down|reset|status|add-identity ORG NAME|stop-orderer N|start-orderer N"; exit 1 ;;
 esac

@@ -93,8 +93,21 @@ def gather(roots, bases, max_new=300):
             if chk:
                 ev["enc"]["%s/%s" % (name, rel)] = chk
         gone = [rel for rel in base if rel not in live and not os.path.basename(rel).startswith(".~ds_")]
-        ev["deleted"] += ["%s/%s" % (name, g) for g in gone]
         new = [(rel, p) for rel, p in live.items() if rel not in base][:max_new]
+        # v13.8: a file that is gone but whose size, header and byte-statistics match a NEW file is a move/rename by the user (sorting folders),
+        # not a deletion. Encrypted copies do not match (their header and statistics differ), so ransomware is still seen.
+        newfp = {}
+        for rel, p in new:
+            try: newfp.setdefault(detect.fingerprint(p), []).append(rel)
+            except OSError: pass
+        moved = set()
+        for g in gone:
+            fp = detect.base_fingerprint(base[g])
+            if fp is not None and newfp.get(fp):
+                newfp[fp].pop(); moved.add(g)
+        gone = [g for g in gone if g not in moved]
+        ev["moved"] = ev.get("moved", 0) + len(moved)
+        ev["deleted"] += ["%s/%s" % (name, g) for g in gone]
         gone_set = set(gone)
         for rel, p in new:
             try:

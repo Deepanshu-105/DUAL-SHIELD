@@ -24,6 +24,10 @@ sys.path.insert(0, "/opt/shield")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
 import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 try:
+    import watchlist     # v13.7
+except Exception:
+    watchlist = None
+try:
     import chain_report  # M1: reports blocks to the CityShield contract
 except Exception as e:
     chain_report = None
@@ -162,7 +166,12 @@ def record_failure(ip):
     while times and now - times[0] > WINDOW:  # keep only the last WINDOW seconds
         times.popleft()
     print(f"[FAIL] {ip} -> {len(times)} failure(s) in last {WINDOW}s{tag(ip)}", flush=True)
-    if len(times) >= THRESHOLD:
+    watched = False
+    if watchlist is not None:
+        try: watchlist.saw(ip); watched = watchlist.is_watched(ip)
+        except Exception: pass
+    if len(times) >= (1 if watched else THRESHOLD):
+        if watched: print(f"[WATCH] {ip} is on the watchlist (another node reported it): threshold 1", flush=True)
         block_ip(ip, time.perf_counter())
 
 

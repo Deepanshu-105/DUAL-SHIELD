@@ -1,4 +1,4 @@
-import { call, q, tx } from "../../../../lib/gateway.js";
+import { call, q, tx, listNodes } from "../../../../lib/gateway.js";
 import { needAdmin, audit, validIp, validNode } from "../../../../lib/security.js";
 
 // Governance and consensus view. GET: any logged-in role. POST: administrator (propose / approve), validated and audited.
@@ -16,7 +16,7 @@ export async function GET() {
     const evs = (await call("GET", "/events?after=0&limit=2000")).events.filter((e) => e.ip !== WARMUP);
     const ips = [...new Set(evs.filter((e) => e.name === "ThreatReported").map((e) => e.ip))].slice(-6);
     const tallies = await Promise.all(ips.map(async (ip) => ({ ip, ...(await q("getTally", ip)), ...(await q("blockInfo", ip)) })));
-    const nodes = await Promise.all(NODES.map(async (n) => ({ addr: n, ...(await q("nodeInfo", n)) })));
+    const nodes = await Promise.all((await listNodes()).map(async (n) => ({ addr: n, ...(await q("nodeInfo", n)) })));
     return Response.json({ ok: true, params, kinds: KINDS, proposals: proposals.reverse(), tallies, nodes, events: evs.slice(-40).reverse() });
   } catch (e) { return Response.json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 }

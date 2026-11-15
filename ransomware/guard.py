@@ -121,6 +121,19 @@ class Guard:
             vault.encrypt_on()
         if self.cfg.get("remote"):
             vault.init(self.cfg["roots"][0]["path"], self.cfg["remote"])
+        try:                                  # v13.8: tell the operator when ordinary programs (= ransomware) could delete the vault
+            import protect_vault
+            ok, notes = protect_vault.status(quiet=True)
+            print("VAULT_PROTECTED" if ok else "VAULT_EXPOSED  %s  -> run: protect_vault.py lock" % "; ".join(notes), flush=True)
+        except Exception as e:
+            print("VAULT_STATUS_UNKNOWN %s" % e, flush=True)
+        if os.name == "nt":                   # v13.10: kernel file events (ETW) -> the writer is known at once, kill in milliseconds
+            try:
+                sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+                import win_etw
+                win_etw.start([r["path"] for r in self.cfg["roots"]])
+            except Exception as e:
+                print("ETW_OFF (%s)" % e, flush=True)
         if vault.is_frozen():
             print("GUARD_FROZEN vault is frozen; restore then run: python3 vault.py unfreeze")
             return False

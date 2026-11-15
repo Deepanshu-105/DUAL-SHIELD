@@ -26,7 +26,15 @@ def note(name="README_DECRYPT.txt", text="All your files are encrypted. Send bit
     open("data/docs/" + name, "w").write(text)
 
 def fresh(n=30):
-    for d in ("data", "evidence"): shutil.rmtree(d, ignore_errors=True)
+    import stat
+    def _rw(f, path, _e):              # Windows: git objects are read-only, plain rmtree leaves a half-deleted vault
+        try: os.chmod(path, stat.S_IWRITE); f(path)
+        except Exception: pass
+    for d in ("data", "evidence"):
+        for _ in range(3):
+            shutil.rmtree(d, onerror=_rw)
+            if not os.path.exists(d): break
+            time.sleep(0.5)
     os.makedirs("data/docs/sub"); os.makedirs("evidence")
     rnd = random.Random(5)
     for i in range(n):
@@ -71,6 +79,43 @@ def a_benign():
     for p in files()[:5]: open(p, "a").write("one more line\n")
     open("data/docs/notes.txt", "w").write("remember to buy milk and call the plumber\n")
 
+
+# ---- v13.8: ordinary heavy workloads that must NOT raise an alarm (false-positive check) ----
+def a_fp_backup():                     # a backup tool copies every file into a sub folder (many new files, same content)
+    os.makedirs("data/docs/backup_copy", exist_ok=True)
+    for p in files(): shutil.copy(p, os.path.join("data/docs/backup_copy", os.path.basename(p) + ".bak"))
+def a_fp_zip_folder():                 # user zips the folder (one big high-entropy file appears)
+    shutil.make_archive("data/docs/archive_2026", "zip", "data/docs/sub") if os.path.isdir("data/docs/sub") else None
+def a_fp_unzip():                      # an archive is extracted: many new files at once
+    os.makedirs("data/docs/unpacked", exist_ok=True)
+    for i in range(25): open("data/docs/unpacked/part%d.txt" % i, "w").write("extracted text %d\n" % i * 20)
+def a_fp_build():                      # a compiler / build writes many small new files
+    os.makedirs("data/docs/build", exist_ok=True)
+    for i in range(40): open("data/docs/build/obj%d.o" % i, "wb").write(os.urandom(300))
+def a_fp_photos():                     # camera import: new high-entropy .jpg files
+    os.makedirs("data/docs/photos", exist_ok=True)
+    for i in range(12): open("data/docs/photos/IMG_%04d.jpg" % i, "wb").write(b"\xff\xd8\xff" + os.urandom(40000))
+def a_fp_organize():                   # user sorts files into folders (renames, content unchanged)
+    os.makedirs("data/docs/sorted", exist_ok=True)
+    for p in files()[:15]: shutil.move(p, os.path.join("data/docs/sorted", os.path.basename(p)))
+def a_fp_resave_all():                 # an editor or sync tool re-saves many files with identical content
+    for p in files(): d = open(p, "rb").read(); open(p, "wb").write(d)
+def a_fp_logrotate():                  # logs are gzip-compressed and the old ones removed
+    import gzip
+    for i in range(3):
+        open("data/docs/app%d.log" % i, "w").write("line\n" * 500)
+    for i in range(3):
+        d = open("data/docs/app%d.log" % i, "rb").read(); open("data/docs/app%d.log.gz" % i, "wb").write(gzip.compress(d)); os.remove("data/docs/app%d.log" % i)
+def a_fp_big_download():               # a large compressed download lands in the folder
+    open("data/docs/setup_installer.bin", "wb").write(os.urandom(3_000_000))
+def a_fp_cleanup():                    # user deletes a few old files
+    for p in files()[:3]: os.remove(p)
+
+FP = [("FP: backup copies every file", a_fp_backup), ("FP: zip a folder", a_fp_zip_folder), ("FP: extract an archive", a_fp_unzip),
+      ("FP: build output (many new files)", a_fp_build), ("FP: photo import (random-looking jpgs)", a_fp_photos),
+      ("FP: sort files into folders", a_fp_organize), ("FP: editor re-saves all files unchanged", a_fp_resave_all),
+      ("FP: log rotate (gzip + delete)", a_fp_logrotate), ("FP: large installer download", a_fp_big_download), ("FP: delete 3 old files", a_fp_cleanup)]
+
 SCEN = [("Crypto ransomware (LockBit-like, rename + note)", a_crypto, "crypto", True),
         ("Crypto, header kept (evasive)", a_crypto_hdr, "crypto", True),
         ("Crypto, encrypted copy + delete original", a_crypto_copy, "crypto", True),
@@ -80,7 +125,7 @@ SCEN = [("Crypto ransomware (LockBit-like, rename + note)", a_crypto, "crypto", 
         ("Double extortion (encrypt + stage archive + note)", a_double, "double_extortion", True),
         ("Data theft only (archive staged)", a_exfil, "exfiltration", False),
         ("Locker / note only", a_locker, "note_only", False),
-        ("Benign edits (false-positive check)", a_benign, None, False)]
+        ("Benign edits (false-positive check)", a_benign, None, False)] + [(n, f, None, False) for n, f in FP]
 
 rows = []
 for name, fn, want, damage in SCEN:
@@ -127,6 +172,8 @@ if LIVE:
             row = {"attack": label, "expected": "killed", "named": typ, "correct": "yes" if killed else "NO",
                    "gate_tripped": "yes" if vault.is_frozen() else "no", "vault_clean": "yes" if vault.is_frozen() else "check",
                    "detect_s": round(killed, 2) if killed else "", "recovered": "", "recover_s": "", "kill": "yes" if killed else "NO"}
+            if not killed:
+                print("\n--- %s: NOT killed in 25 s. guard log (last 12 lines) ---" % label); print("\n".join(L.splitlines()[-12:]))
             try: ap.kill()
             except Exception: pass
         finally:

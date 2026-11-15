@@ -33,3 +33,6 @@ fabric/bin/
 **/identities.json
 **/node_modules/
 dashboard/.next/
+gw.log
+ransomware/results/
+ransomware/data/

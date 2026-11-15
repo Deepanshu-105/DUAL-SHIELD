@@ -26,10 +26,16 @@ class ChainError(Exception):
 
 
 def identity(x):
-    """account index or full identity string -> identity string"""
+    """account index or full identity string -> identity string (indexes above 5 are nodes added later: the gateway knows them)"""
     if x is None or x == "":
         return ""
-    return IDENTITY_NAMES[int(x)] if str(x).isdigit() else str(x)
+    if not str(x).isdigit():
+        return str(x)
+    if int(x) in IDENTITY_NAMES:
+        return IDENTITY_NAMES[int(x)]
+    for i in Chain().identities():
+        IDENTITY_NAMES[i["who"]] = i["node"]
+    return IDENTITY_NAMES[int(x)]
 
 
 class Chain:
@@ -65,6 +71,10 @@ class Chain:
     def events(self, after=0, limit=500):
         o = self._call("GET", "/events?after=%d&limit=%d" % (after, limit))
         return o["events"], o["head"]
+
+    def identities(self):
+        """[{who, node, org, name}] every identity the gateway can use (the six built-in ones and added nodes)"""
+        return self._call("GET", "/identities")["identities"]
 
     def head(self):
         return self._call("GET", "/health")["head"]

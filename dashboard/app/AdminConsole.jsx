@@ -121,7 +121,7 @@ export default function AdminConsole() {
           </div>
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>NODES</h3>
           <div className="grid">{chain && chain.nodes && chain.nodes.map((n, i) => (
-            <div className="node" style={{ background: nodeTone(n) }} key={n.addr}><b>{["Node A (target, Org1)", "Node B (peer, Org2)", "Node C (Org1)"][i]}</b><div>{nodeLabel(n)}</div><div className="mono">stake {n.stake} · {n.addr.split("@")[0]}</div></div>))}</div>
+            <div className="node" style={{ background: nodeTone(n) }} key={n.addr}><b>{["Node A (target, Org1)", "Node B (peer, Org2)", "Node C (Org1)"][i] || ("Node " + n.addr.split("@")[0].split(":")[1] + " (" + n.addr.split(":")[0].replace("MSP", "") + ")")}</b><div>{nodeLabel(n)}</div><div className="mono">stake {n.stake} · {n.addr.split("@")[0]}</div></div>))}</div>
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>LATEST EVENTS</h3><Timeline />
         </>}
 
