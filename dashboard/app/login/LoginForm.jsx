@@ -21,8 +21,8 @@ export default function LoginForm() {
         <p className="muted">Operator console. Sign in as administrator, operator or read-only viewer.</p>
         <label htmlFor="pw">Password</label>
         <input id="pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus required minLength={8} maxLength={200} />
-        <label htmlFor="code">Authenticator code <span className="tiny">(administrator and operator, if 2-step sign-in is on)</span></label>
-        <input id="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]*" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} />
+        <label htmlFor="code">Authenticator code <span className="tiny">(administrator and operator, if 2-step sign-in is on; phone lost: a one-time backup code)</span></label>
+        <input id="code" autoComplete="one-time-code" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} />
         <button disabled={busy || pw.length < 8}>{busy ? "Checking..." : "Sign in"}</button>
         {msg && <div className="err" role="alert">{msg}</div>}
         <p className="tiny">Repeated wrong passwords lock this screen for a while. Every sign-in is written to a tamper-evident audit log.</p>

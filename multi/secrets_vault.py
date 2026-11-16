@@ -5,6 +5,8 @@
    python3 multi/secrets_vault.py status     what is sealed, what is still plain text
    python3 multi/secrets_vault.py set KEY [--random]   change one sealed value (hidden prompt, or a random one that is never shown)
    python3 multi/secrets_vault.py unseal     put the values back into config.env (undo)
+   python3 multi/secrets_vault.py recovery-key   make an offline RECOVERY KEY (shown once). If the passphrase is ever lost, type the recovery key (starts with RK-) at the passphrase prompt.
+                                             Print it, keep it away from this machine. Run it again after you change the passphrase (re-seal).
    python3 multi/secrets_vault.py env        (used by the start scripts) prints export lines for eval; asks for the passphrase on the terminal
 Passphrase: typed on the terminal, or read from the file named in DS_PASSPHRASE_FILE (mode 600, keep it on a USB stick or tmpfs, for unattended starts).
 The secrets exist in clear only in the memory of the running programs, never on disk."""
@@ -35,16 +37,28 @@ def passphrase(confirm=False):
                 return v
         except OSError:
             return getpass.getpass(p)
-    p = ask("secrets passphrase: ")
+    p = ask("secrets passphrase (or the recovery key RK-...): ")
+    if p.startswith("RK-"): return from_recovery(p)
     if confirm:
         if len(p) < 12: die("passphrase must have at least 12 characters")
         if ask("again: ") != p: die("passphrases differ")
     return p
+def from_recovery(rk):
+    try:
+        j = json.load(open(ENC)); r = j["rec"]
+        key = base64.b32decode(rk[3:].replace("-", "").upper() + "=" * (-len(rk[3:].replace("-", "")) % 8))
+        return AESGCM(key).decrypt(base64.b64decode(r["nonce"]), base64.b64decode(r["ct"]), AAD + b"-rec").decode()
+    except Exception: die("wrong recovery key (or none was made: python3 multi/secrets_vault.py recovery-key)")
 def derive(pw, salt): return hashlib.scrypt(pw.encode(), salt=salt, n=2**15, r=8, p=1, maxmem=128 * 1024 * 1024, dklen=32)
 def write_enc(data, pw):
     salt, nonce = os.urandom(16), os.urandom(12)
     ct = AESGCM(derive(pw, salt)).encrypt(nonce, json.dumps(data).encode(), AAD)
-    open(ENC, "w").write(json.dumps({"v": 1, "salt": base64.b64encode(salt).decode(), "nonce": base64.b64encode(nonce).decode(), "ct": base64.b64encode(ct).decode()}))
+    j = {"v": 1, "salt": base64.b64encode(salt).decode(), "nonce": base64.b64encode(nonce).decode(), "ct": base64.b64encode(ct).decode()}
+    try:
+        old = json.load(open(ENC))
+        if "rec" in old: j["rec"] = old["rec"]         # keep the recovery wrap (same passphrase)
+    except Exception: pass
+    open(ENC, "w").write(json.dumps(j))
     os.chmod(ENC, 0o600)
 def read_enc(pw):
     if not os.path.exists(ENC): die("multi/secrets.enc does not exist (nothing sealed)")
@@ -69,6 +83,14 @@ if cmd == "seal":
     write_enc(vals, passphrase(confirm=True))
     for k in vals: txt = set_cfg(txt, k, "")
     save_cfg(txt); print("sealed %d values into multi/secrets.enc: %s\nconfig.env now has empty lines for them. Remember the passphrase: without it the secrets cannot be recovered." % (len(vals), ", ".join(vals)))
+elif cmd == "recovery-key":
+    pw = passphrase(); read_enc(pw)                                  # proves the passphrase is right
+    if pw.startswith("RK-"): die("type the normal passphrase, not a recovery key")
+    key = os.urandom(32); nonce = os.urandom(12)
+    j = json.load(open(ENC)); j["rec"] = {"nonce": base64.b64encode(nonce).decode(), "ct": base64.b64encode(AESGCM(key).encrypt(nonce, pw.encode(), AAD + b"-rec")).decode()}
+    open(ENC, "w").write(json.dumps(j)); os.chmod(ENC, 0o600)
+    k = base64.b32encode(key).decode().rstrip("=")
+    print("RECOVERY KEY (shown once; print it, keep it away from this machine; do not photograph or paste it):\n\n    RK-" + "-".join(k[i:i + 4] for i in range(0, len(k), 4)) + "\n")
 elif cmd == "env":
     if not os.path.exists(ENC): sys.exit(0)
     for k, v in read_enc(passphrase()).items(): print("export %s=%s" % (k, shlex.quote(v)))

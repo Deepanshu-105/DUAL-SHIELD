@@ -62,6 +62,40 @@ export function checkTotp(code, now = Date.now()) {
   return false;
 }
 
+// ---- v13.11: backup codes for a lost phone. multi/make_backup_codes.py stores only SHA-256 hashes in DASH_BACKUP_CODES; each code works ONCE
+//      (used hashes are kept in a small file, so the proxy and the route handlers agree), and it is as rate-limited as a password.
+const USED = () => process.env.DASH_BACKUP_USED || path.join(process.cwd(), "..", "multi", "logs", "dashboard_backup_used.txt");
+const normCode = (c) => String(c || "").toLowerCase().replace(/[^a-z2-7]/g, "");
+export const backupHash = (c) => crypto.createHash("sha256").update("ds-backup|" + normCode(c)).digest("hex");
+export function checkBackup(code) {
+  const n = normCode(code);
+  if (n.length < 12 || n.length > 16) return false;
+  const list = String(process.env.DASH_BACKUP_CODES || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const h = backupHash(n);
+  let hit = false;
+  for (const x of list) if (x.length === h.length && crypto.timingSafeEqual(Buffer.from(x), Buffer.from(h))) hit = true;   // no early exit
+  if (!hit) return false;
+  let used = ""; try { used = fs.readFileSync(USED(), "utf8"); } catch {}
+  if (used.split("\n").includes(h)) return false;                      // already used
+  try { fs.mkdirSync(path.dirname(USED()), { recursive: true }); fs.appendFileSync(USED(), h + "\n", { mode: 0o600 }); } catch { return false; }
+  return true;
+}
+
+// ---- v13.11: finer permissions per action. Default: viewer = read only, operator = Layer 2 actions + demo, admin = everything (governance, audit).
+//      DASH_PATH_ROLES="/api/rollback=admin,/api/recovery=operator" sets the lowest role that may POST to a path (viewer < operator < admin).
+const RANK = { viewer: 0, operator: 1, admin: 2 };
+const ADMIN_ONLY_PATHS = ["/api/admin/chain", "/api/audit"];
+export function pathAllowed(role, pathname, method = "POST") {
+  if (method === "GET" || method === "HEAD") return true;
+  let need = ADMIN_ONLY_PATHS.includes(pathname) ? "admin" : "operator";
+  for (const pair of String(process.env.DASH_PATH_ROLES || "").split(",")) {
+    const i = pair.indexOf("="); if (i < 1) continue;
+    const k = pair.slice(0, i).trim(), v = pair.slice(i + 1).trim();
+    if (k === pathname && v in RANK) need = v;
+  }
+  return (RANK[role] ?? -1) >= RANK[need];
+}
+
 // ---- v13.4: a password must not cross a network in clear text: sign-in is refused over plain HTTP unless the client is this machine
 //      (or TLS=1: then the dashboard is only reachable through the TLS proxy, or DASH_ALLOW_HTTP=1 for a private lab)
 export function plainHttpRefused(req) {

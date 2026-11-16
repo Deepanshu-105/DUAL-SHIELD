@@ -1,4 +1,4 @@
-import { checkPassword, issue, cookieHeader, clientIp, lockedFor, noteFail, noteOk, sameOrigin, audit, configured, plainHttpRefused, totpRequired, checkTotp } from "../../../../lib/security.js";
+import { checkPassword, issue, cookieHeader, clientIp, lockedFor, noteFail, noteOk, sameOrigin, audit, configured, plainHttpRefused, totpRequired, checkTotp, checkBackup } from "../../../../lib/security.js";
 
 export async function POST(req) {
   const ip = clientIp(req);
@@ -10,7 +10,8 @@ export async function POST(req) {
   const body = await req.json().catch(() => ({}));
   const pass = typeof body.password === "string" ? body.password.slice(0, 200) : "";
   let role = checkPassword(pass);
-  if (role && totpRequired(role) && !checkTotp(body.code)) role = null;      // same answer as a wrong password: nothing leaks about which part failed
+  let usedBackup = false;
+  if (role && totpRequired(role) && !checkTotp(body.code)) { if (checkBackup(body.code)) usedBackup = true; else role = null; }      // same answer as a wrong password: nothing leaks about which part failed
   if (!role) {
     noteFail(ip);
     await new Promise((r) => setTimeout(r, 600));          // slows guessing, the same for every wrong answer
@@ -18,7 +19,7 @@ export async function POST(req) {
     return Response.json({ ok: false, error: "Wrong password or code." }, { status: 401 });
   }
   noteOk(ip);
-  audit("LOGIN_OK", role, ip, "");
+  audit(usedBackup ? "LOGIN_OK_BACKUP_CODE" : "LOGIN_OK", role, ip, usedBackup ? "a one-time backup code was used: make new codes (make_backup_codes.py)" : "");
   const s = issue(role);
   return Response.json({ ok: true, role }, { headers: { "Set-Cookie": cookieHeader(s.token, s.maxAge) } });
 }

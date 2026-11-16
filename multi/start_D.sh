@@ -4,6 +4,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
 LOGD="$ROOT/multi/logs"; mkdir -p "$LOGD"
 [ ${#DASH_PASS} -ge 8 ] && [ ${#AGENT_SECRET_T} -ge 16 ] && [ ${#AGENT_SECRET_P} -ge 16 ] || { echo "Set DASH_PASS, AGENT_SECRET_T and AGENT_SECRET_P in multi/config.env (run multi/gen_secrets.sh)"; exit 1; }
+if [ "${PRODUCTION:-0}" = "1" ]; then       # v13.12: no start with a known weak point
+  [ -f "$ROOT/multi/tls/dashboard/node.crt" ] || { echo "PRODUCTION: creating the private CA and certificates (multi/make_tls.sh)"; bash "$ROOT/multi/make_tls.sh" || exit 1
+    echo "copy multi/tls/target -> T:multi/tls/node and multi/tls/peer -> P:multi/tls/node (see multi/make_tls.sh), then start T and P"; }
+  python3 "$ROOT/multi/check_D.py" --start || { echo "PRODUCTION: fix the FAIL lines above (python3 multi/check_D.py shows them again) or start with PRODUCTION=0"; exit 1; }
+fi
 # v13.4: config.env holds every password: it must not be readable by other users (fixed automatically), and the weak spots are announced
 CFGMODE=$(stat -c %a "$ROOT/multi/config.env" 2>/dev/null); case "$CFGMODE" in 600|400) ;; *) chmod 600 "$ROOT/multi/config.env" && echo "note: multi/config.env was mode $CFGMODE, set to 600";; esac
 [ -n "$DASH_OPERATOR_PASS" ] && [ "$DASH_OPERATOR_PASS" = "$DASH_PASS" ] && { echo "DASH_OPERATOR_PASS must differ from DASH_PASS"; exit 1; }

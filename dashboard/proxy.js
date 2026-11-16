@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { configured, sessionOf, issue, cookieHeader, clearCookie, securityHeaders, sameOrigin, audit, clientIp } from "./lib/security.js";
+import { pathAllowed, configured, sessionOf, issue, cookieHeader, clearCookie, securityHeaders, sameOrigin, audit, clientIp } from "./lib/security.js";
 
 // v13: every page and every /api call needs a valid session (log in at /login). The only open doors are /login and POST /api/auth/login.
 //   viewer: read-only (GET).  operator: Layer 2 actions.  admin: may also POST everything, but only same-origin and with the x-ds-confirm header.
@@ -48,7 +48,7 @@ export function proxy(request) {
     return done(res);
   }
   if (request.method !== "GET" && request.method !== "HEAD" && pathname !== "/api/auth/logout") {   // any signed-in role may sign out
-    if (sess.r === "viewer" || (sess.r === "operator" && ADMIN_ONLY.includes(pathname))) { audit("DENIED", sess.r, clientIp(request), request.method + " " + pathname); return done(NextResponse.json({ ok: false, error: sess.r === "viewer" ? "read-only account" : "administrator role required" }, { status: 403 })); }
+    if (!pathAllowed(sess.r, pathname, request.method)) { audit("DENIED", sess.r, clientIp(request), request.method + " " + pathname); return done(NextResponse.json({ ok: false, error: sess.r === "viewer" ? "read-only account" : "administrator role required" }, { status: 403 })); }
     if ((!sameOrigin(request) || request.headers.get("x-ds-confirm") !== "1")) {
       audit("CSRF_REFUSED", sess.r, clientIp(request), pathname);
       return done(NextResponse.json({ ok: false, error: "cross-site or unconfirmed request refused" }, { status: 403 }));

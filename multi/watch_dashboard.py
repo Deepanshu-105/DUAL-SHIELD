@@ -6,8 +6,13 @@ An attacker with root on D can stop the dashboard but cannot stop this alarm. St
 import argparse, json, os, socket, ssl, sys, time, urllib.request
 ap = argparse.ArgumentParser()
 ap.add_argument("--url", required=True); ap.add_argument("--cafile"); ap.add_argument("--interval", type=int, default=30)
-ap.add_argument("--fails", type=int, default=3); ap.add_argument("--webhook"); ap.add_argument("--once", action="store_true")
+ap.add_argument("--fails", type=int, default=3); ap.add_argument("--webhook"); ap.add_argument("--once", action="store_true"); ap.add_argument("--print-autostart", action="store_true")
 a = ap.parse_args()
+if a.print_autostart:      # v13.11: run the watcher by itself on another laptop so nobody has to remember to start it
+    me = os.path.abspath(__file__); cmd = "%s %s --url %s%s --interval %d --fails %d%s" % (sys.executable, me, a.url, " --cafile " + a.cafile if a.cafile else "", a.interval, a.fails, " --webhook " + a.webhook if a.webhook else "")
+    print("# Linux (crontab -e): starts at boot and again every 10 minutes if it is not running\n@reboot " + cmd + " >> /tmp/watch_dashboard.out 2>&1 &\n*/10 * * * * pgrep -f watch_dashboard.py >/dev/null || (" + cmd + " >> /tmp/watch_dashboard.out 2>&1 &)\n")
+    print("# Windows (Administrator PowerShell): starts at boot\nschtasks /Create /TN DualShieldWatcher /SC ONSTART /RU SYSTEM /TR \"" + cmd + "\"")
+    sys.exit(0)
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "watch_dashboard.log"); os.makedirs(os.path.dirname(LOG), exist_ok=True)
 ctx = ssl.create_default_context(cafile=a.cafile) if a.url.startswith("https") else None
 def say(level, msg):
