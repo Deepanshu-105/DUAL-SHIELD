@@ -1,0 +1,38 @@
+bash -c cd /srv && ./deploy.sh	/usr/bin/bash
+bash -ic source ~/.bashrc	/usr/bin/bash
+sh -c echo hello	/usr/bin/sh
+ssh -o StrictHostKeyChecking=no deploy@10.0.0.5 'bash -s'	/usr/bin/ssh
+ssh -t admin@10.0.0.5 sudo -i	/usr/bin/ssh
+python3 -c print(2+2)	/usr/bin/python3
+python3 -m pip install requests	/usr/bin/python3
+python3 -c import socket;print(socket.gethostbyname('example.org'))	/usr/bin/python3
+node -e console.log(process.version)	/usr/bin/node
+node app.js --port 3000	/usr/bin/node
+ruby -e puts RUBY_VERSION	/usr/bin/ruby
+perl -e print 1	/usr/bin/perl
+php -S 0.0.0.0:8000	/usr/bin/php
+php -r echo PHP_VERSION;	/usr/bin/php
+nc -l -p 8080	/usr/bin/nc
+nc -vz db.internal 5432	/usr/bin/nc
+ncat --ssl -l 4443	/usr/bin/ncat
+socat TCP-LISTEN:8080,fork TCP:backend:80	/usr/bin/socat
+openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out c.pem	/usr/bin/openssl
+openssl s_client -connect mail.example.org:993	/usr/bin/openssl
+telnet smtp.example.org 25	/usr/bin/telnet
+curl -fsSL https://get.docker.com -o get-docker.sh	/usr/bin/curl
+wget https://example.org/xmrig-guide.pdf	/usr/bin/wget
+tail -f /var/log/xmrig.log	/usr/bin/tail
+nano miner-notes.txt	/usr/bin/nano
+vim /etc/hosts	/usr/bin/vim
+cat /proc/cpuinfo	/usr/bin/cat
+awk {print$1} access.log	/usr/bin/gawk
+lua script.lua	/usr/bin/lua
+zsh -l	/usr/bin/zsh
+tmux new -s work	/usr/bin/tmux
+docker exec -it db bash	/usr/bin/docker
+kubectl exec -it web-0 -- sh	/usr/bin/kubectl
+git push origin main	/usr/bin/git
+systemctl restart nginx	/usr/bin/systemctl
+java -jar build/libs/app.jar	/usr/bin/java
+mysql -u root -p	/usr/bin/mysql
+psql -h db -U app	/usr/bin/psql

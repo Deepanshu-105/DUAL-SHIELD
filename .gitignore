@@ -41,3 +41,15 @@ ransomware/results/
 ransomware/data/
 etwprobe_dir/
 etw_dump.txt
+*.key
+evidence/EVIDENCE_*/
+multi/*.pid
+*.bak
+node_modules/
+ransomware/results/*.tmp
+.env
+.env.*
+*backup*codes*
+*recovery*key*
+vault_key*
+*.passphrase

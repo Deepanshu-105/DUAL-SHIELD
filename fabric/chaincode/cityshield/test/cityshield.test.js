@@ -74,9 +74,9 @@ describe("threat consensus", () => {
   it("one report is not enough, the second confirms (K=2)", async () => {
     const L = await setup();
     await tx(L, A, "reportThreat", IP, "ja3x");
-    assert.deepStrictEqual(await q(L, "getTally", IP), { count: 1, k: 2, confirmed: false });
+    assert.deepStrictEqual(await q(L, "getTally", IP), { count: 1, k: 2, confirmed: false, reporters: ["Org1MSP:User1@org1"] });
     await tx(L, B, "reportThreat", IP, "ja3x");
-    assert.deepStrictEqual(await q(L, "getTally", IP), { count: 2, k: 2, confirmed: true });
+    assert.deepStrictEqual(await q(L, "getTally", IP), { count: 2, k: 2, confirmed: true, reporters: ["Org1MSP:User1@org1", "Org2MSP:User1@org2"] });
     assert.ok(L.events.some((e) => e.name === "ThreatConsensusReached" && e.ip === IP));
     assert.strictEqual((await q(L, "blockInfo", IP)).active, true);
   });
@@ -182,7 +182,7 @@ describe("multi-signature governance", () => {
   it("threshold must stay within 1..number of governors, and the last governors cannot be removed below it", async () => {
     const L = await setup();
     await rejects(tx(L, OWNER, "propose", 8, "", "", 5), "bad threshold");
-    await rejects(tx(L, OWNER, "propose", 11, "", "", 0), "bad kind");
+    await rejects(tx(L, OWNER, "propose", 12, "", "", 0), "bad kind");
   });
 });
 
@@ -197,5 +197,30 @@ describe("clean-state anchor", () => {
     const L = await setup();
     await rejects(tx(L, X, "anchorCleanState", IP, ROOT, 1), "not staked");
     await rejects(tx(L, A, "anchorCleanState", IP, "nothex", 1), "64 hex");
+  });
+});
+
+describe("v13.13 organisation diversity and honest node count", () => {
+  it("minOrgs=2: two nodes of one organisation cannot confirm; a node of another organisation can", async () => {
+    const L = await setup();
+    await tx(L, OWNER, "propose", 11, "", "", 2);
+    assert.strictEqual((await q(L, "params")).minOrgs, 2);
+    await tx(L, A, "reportThreat", IP, "j"); await tx(L, C, "reportThreat", IP, "j");
+    assert.strictEqual((await q(L, "getTally", IP)).confirmed, false);
+    await tx(L, B, "reportThreat", IP, "j");
+    assert.strictEqual((await q(L, "getTally", IP)).confirmed, true);
+  });
+  it("minOrgs default is 1 (old behaviour) and must be 1-5", async () => {
+    const L = await setup();
+    assert.strictEqual((await q(L, "params")).minOrgs, 1);
+    await rejects(tx(L, OWNER, "propose", 11, "", "", 0), "minOrgs 1-5");
+    await rejects(tx(L, OWNER, "propose", 11, "", "", 6), "minOrgs 1-5");
+  });
+  it("a node slashed after an unconfirmed report leaves the node count", async () => {
+    const L = await setup();
+    const n0 = (await q(L, "params")).nodeCount;
+    await tx(L, A, "reportThreat", IP, "j"); L.t += 61;
+    await tx(L, OWNER, "slashExpired", IP);
+    assert.strictEqual((await q(L, "params")).nodeCount, n0 - 1);
   });
 });

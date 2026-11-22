@@ -1,0 +1,10 @@
+import { renderReport, esc } from "./lib/report.js";
+let bad = 0; const check = (n, ok) => { console.log((ok ? "PASS " : "FAIL ") + n); if (!ok) bad++; };
+const evil = { ts: 1763740000, node: "T", kind: "web", title: "Web attack: <script>alert(1)</script>", detail: 'from "x" & <img src=x onerror=alert(2)>', sev: "bad", actions: ["blocked 1.2.3.4", "<b>x</b>"] };
+const h = renderReport([evil], { web: 1, host: 0, killed: 0, blocked: 1 }, { generated: "now<b>" });
+check("log text is escaped (no raw tags from events)", !/<script>alert|<img src=x|<b>x<\/b>|now<b>/.test(h) && h.includes("&lt;script&gt;") && h.includes("&lt;img"));
+check("summary numbers present", /Web attacks: <b>1<\/b>/.test(h) && /Addresses blocked: <b>1<\/b>/.test(h));
+check("empty report says so", renderReport([], null, {}).includes("No attack events"));
+check("oldest first", (() => { const a = renderReport([{ ...evil, ts: 200, title: "B" }, { ...evil, ts: 100, title: "A" }], {}, {}); return a.indexOf("<b>A</b>") < a.indexOf("<b>B</b>"); })());
+check("control characters removed, non-strings safe", esc("a\u001b[0mb\u0000") === "a[0mb" && esc(null) === "" && esc(5) === "5");
+process.exit(bad ? 1 : 0);

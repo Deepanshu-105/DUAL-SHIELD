@@ -6,6 +6,7 @@ import ipaddress, os, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
 import watchlist
+import block_policy      # v13.14
 import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 import ipcrypt
 from chainlib import Chain
@@ -32,12 +33,12 @@ def sensor_event(kind, sid):
         f.write(line + "\n")
 
 
-def unblock(ip):
+def unblock(ip, why="overruled"):
     if ip.startswith("sensor:"):
         return sensor_event("RELEASE", ip[7:])
     ipaddress.ip_address(ip)
     shield_os.block_del(ip)
-    line = "PEER_UNBLOCK ip=%s ts=%.3f reason=overruled" % (ip, time.time())
+    line = "PEER_UNBLOCK ip=%s ts=%.3f reason=%s" % (ip, time.time(), why)
     print(line, flush=True)
     with open(LOG, "a") as f:
         f.write(line + "\n")
@@ -46,8 +47,11 @@ def unblock(ip):
 def run():
     chain = Chain()
     last = None
+    policy = block_policy.Policy(block, lambda ip, why="ttl": unblock(ip, why), state_file=LOG + ".policy.json", log=lambda m: print(m, flush=True))
+    print("BLOCK_POLICY ttl=%ds breaker=%d/%ds never-block=%d addresses" % (policy.ttl, policy.cb_max, policy.cb_win, len(policy.infra)), flush=True)
     while True:
         try:
+            for ip in policy.tick(): print("EXPIRED ip=%s (consensus-only block, no local evidence)" % ip, flush=True)
             if last is None:                       # first start: only events from now on
                 last = chain.head()
                 print("subscribed: polling from event %d" % last, flush=True)
@@ -74,13 +78,13 @@ def run():
                     continue
                 if name == "ThreatOverruled":
                     print("OVERRULED ip=%s slashed=%d" % (ip, ev.get("slashedNodes", 0)), flush=True)
-                    unblock(ip)
+                    policy.release(ip); unblock(ip)
                     continue
                 print("EVENT ip=%s count=%d evidence=%s" % (ip, ev.get("count", 0), "local" if watchlist.was_seen(ip) else "consensus-only"), flush=True)
                 if ip.startswith("sensor:"):
                     sensor_event("QUARANTINE", ip[7:])
                     continue
-                block(ip)
+                policy.consensus(ip, watchlist.was_seen(ip))
             time.sleep(POLL)
         except Exception as e:
             print("listener error:", e, "- retrying in 2 s", flush=True)

