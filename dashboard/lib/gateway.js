@@ -30,3 +30,13 @@ export function call(method, p, obj, timeout = 8000) {
 }
 export const q = async (fn, ...args) => JSON.parse((await call("POST", "/query", { who: 0, fn, args })).result);
 export const tx = async (fn, ...args) => { const r = await call("POST", "/tx", { who: 0, fn, args }, 30000); try { return JSON.parse(r.result); } catch { return r.result; } };
+
+// v13.6: nodes shown on the dashboard = the three built-in ones + every added identity that is approved or has stake (so a new laptop appears by itself).
+const BASE_NODES = ["Org1MSP:User1@org1.example.com", "Org2MSP:User1@org2.example.com", "Org1MSP:User2@org1.example.com"];
+export async function listNodes() {
+  let extra = [];
+  try { extra = (await call("GET", "/identities")).identities.filter((i) => i.who >= 6).map((i) => i.node); } catch {}
+  const out = [...BASE_NODES];
+  for (const n of extra) { try { const i = await q("nodeInfo", n); if (i.approved || i.stake > 0) out.push(n); } catch {} }
+  return out;
+}

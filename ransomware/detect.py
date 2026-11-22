@@ -62,6 +62,24 @@ def build_baseline(folder):
     return base
 
 
+def fingerprint(path):
+    """(size, header, chi-square of the sampled blocks): identifies a file that was only moved or renamed."""
+    size = os.path.getsize(path)
+    offs = sorted({0, max(0, (size - BLOCK) // 2), max(0, size - BLOCK)})
+    chis = []
+    for off in offs:
+        d = read_block_at(path, off)
+        if len(d) == BLOCK:
+            chis.append(round(chi_square_bytes(d), 3))
+    return (size, read_head(path).hex(), tuple(chis))
+
+
+def base_fingerprint(b):
+    if not b or b.get("size", 0) == 0:
+        return None
+    return (b["size"], b["header"], tuple(round(x["chi2"], 3) for x in (b.get("blocks") or [])))
+
+
 def check_file(path, rel, base):
     """Return (None, '') if fine, else ('A' or 'B', detail)."""
     try:

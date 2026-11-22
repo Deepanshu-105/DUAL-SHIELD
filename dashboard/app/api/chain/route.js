@@ -1,4 +1,4 @@
-import { call, q } from "../../../lib/gateway.js";
+import { call, q, listNodes } from "../../../lib/gateway.js";
 
 // Live state of the CityShield chaincode on Hyperledger Fabric, read through the gateway on this laptop (fabric/gateway/server.js).
 // Replaces the old browser-side Hardhat/ethers calls. Fabric has no gas and no ETH: "stake" is a plain counter in the chaincode.
@@ -15,7 +15,7 @@ export async function GET() {
     const ip = evs.length ? evs[evs.length - 1].ip : null;
     const t = ip ? await q("getTally", ip) : { count: 0, k: p.required, confirmed: false };
     const reporters = new Set(evs.filter((e) => e.ip === ip).map((e) => e.node));
-    const nodes = await Promise.all(NODES.map(async (a) => ({ addr: a, stake: (await q("nodeInfo", a)).stake, reported: reporters.has(a), slashed: slashed.has(a) })));
+    const nodes = await Promise.all((await listNodes()).map(async (a) => ({ addr: a, stake: (await q("nodeInfo", a)).stake, reported: reporters.has(a), slashed: slashed.has(a) })));
     return Response.json({ status: "live", k: p.required, n: p.nodeCount, ip, count: t.count, confirmed: t.confirmed, nodes });
   } catch (e) {
     return Response.json({ status: "error: " + (e.message || e) });

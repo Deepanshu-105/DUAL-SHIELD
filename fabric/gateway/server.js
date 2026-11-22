@@ -8,7 +8,8 @@
  *   GET  /events?after=<id>                                             -> chaincode events since id (polling, survives restarts)
  *   GET  /health
  *
- * Identities ("who"): 0 Org1 Admin (owner), 1 Org1 User1 (target node), 2 Org2 User1 (peer node), 3 Org1 User2, 4 Org2 User2, 5 Org2 Admin.
+ * Identities ("who"): 0 Org1 Admin (owner), 1 Org1 User1 (target node), 2 Org2 User1 (peer node), 3 Org1 User2, 4 Org2 User2, 5 Org2 Admin,
+ * 6, 7, ... identities added with network.sh add-identity (GET /identities lists them).
  * With GATEWAY_TLS=1 the API is HTTPS with mutual TLS (private CA, multi/make_tls.sh) and each role may only use its own identity:
  *   dualshield-dashboard -> 0,3,4,5   dualshield-target -> 1   dualshield-peer -> 2
  * GATEWAY_LAB=1 lets any authenticated laptop use any identity (the lab demo has the target report "as the peer" to reach K=2).
@@ -31,6 +32,28 @@ const O = (n) => path.join(NET, "crypto", "peerOrganizations", `org${n}.example.
 const IDENT = [[1, "Admin"], [1, "User1"], [2, "User1"], [1, "User2"], [2, "User2"], [2, "Admin"]].map(([org, u]) => ({
   mspId: `Org${org}MSP`, name: `${u}@org${org}.example.com`, dir: path.join(O(org), "users", `${u}@org${org}.example.com`, "msp"),
 }));
+const BASE = IDENT.length;
+// v13.6: identities added later (network.sh add-identity ORG NAME) get the next numbers 6, 7, ...; the order is kept in identities.json so a number never changes.
+const IDFILE = path.join(NET, "identities.json");
+function refreshIdentities() {
+  let order = []; try { order = JSON.parse(fs.readFileSync(IDFILE, "utf8")); } catch {}
+  const found = [];
+  for (const org of [1, 2]) {
+    let dirs = []; try { dirs = fs.readdirSync(path.join(O(org), "users")); } catch {}
+    for (const d of dirs) {
+      const n = d.split("@")[0];
+      if (IDENT.slice(0, BASE).some((x) => x.name === d)) continue;
+      if (!fs.existsSync(path.join(O(org), "users", d, "msp", "signcerts")) || !fs.existsSync(path.join(O(org), "users", d, "msp", "keystore"))) continue;
+      found.push({ key: `${org}:${n}`, mspId: `Org${org}MSP`, name: d, dir: path.join(O(org), "users", d, "msp") });
+    }
+  }
+  const known = order.filter((k) => found.some((f) => f.key === k)), add = found.filter((f) => !known.includes(f.key)).map((f) => f.key).sort();
+  const next = [...known, ...add];
+  if (add.length) { try { fs.writeFileSync(IDFILE, JSON.stringify(next)); } catch {} }
+  IDENT.length = BASE;
+  for (const k of next) { const f = found.find((x) => x.key === k); IDENT.push({ mspId: f.mspId, name: f.name, dir: f.dir }); }
+}
+refreshIdentities();
 const ALLOWED = { "dualshield-dashboard": [0, 3, 4, 5], "dualshield-target": [1], "dualshield-peer": [2] };
 const readFirst = (d) => fs.readFileSync(path.join(d, fs.readdirSync(d).filter((f) => !f.startsWith("."))[0]));
 
@@ -90,7 +113,10 @@ async function eventLoop() {
 function allowed(req, who) {
   if (!TLS || LAB) return true;
   const cn = req.socket.getPeerCertificate && (req.socket.getPeerCertificate().subject || {}).CN;
-  return (ALLOWED[cn] || []).includes(who);
+  if ((ALLOWED[cn] || []).includes(who)) return true;
+  // v13.6: a laptop with the certificate role "dualshield-node-<name>" may use exactly the identity <name>@orgN (added nodes)
+  const m = /^dualshield-node-([A-Za-z][A-Za-z0-9]{1,15})$/.exec(cn || "");
+  return !!m && who >= BASE && !!IDENT[who] && IDENT[who].name.split("@")[0] === m[1];
 }
 function body(req) {
   return new Promise((res, rej) => {
@@ -133,12 +159,17 @@ async function handler(req, res) {
     if (u.pathname !== "/health" && limited(req)) { stats.rate_limited++; res.setHeader("retry-after", "1"); return send(res, 429, { ok: false, error: "rate limit" }); }
     if (req.method === "GET" && u.pathname === "/metrics") { const m = metricsText(); res.writeHead(200, { "content-type": "text/plain" }); return res.end(m); }
     if (req.method === "GET" && u.pathname === "/health") return send(res, 200, { ok: true, head: lastId, tls: TLS });
+    if (req.method === "GET" && u.pathname === "/identities") {
+      refreshIdentities();
+      return send(res, 200, { ok: true, identities: IDENT.map((x, who) => ({ who, node: `${x.mspId}:${x.name}`, org: x.mspId, name: x.name.split("@")[0] })) });
+    }
     if (req.method === "GET" && u.pathname === "/events") {
       const after = Number(u.searchParams.get("after") || 0), limit = Math.min(Number(u.searchParams.get("limit") || 500), 2000);
       return send(res, 200, { head: lastId, events: events.filter((e) => e.id > after).slice(0, limit) });
     }
     if (req.method === "POST" && (u.pathname === "/tx" || u.pathname === "/query")) {
       const b = await body(req), who = Number(b.who);
+      if (Number.isInteger(who) && who >= BASE && !IDENT[who]) refreshIdentities();
       if (!Number.isInteger(who) || !IDENT[who]) return send(res, 400, { ok: false, error: "unknown identity" });
       if (!allowed(req, who)) { stats.forbidden++; return send(res, 403, { ok: false, error: "this certificate may not use that identity" }); }
       if (!FN.test(String(b.fn)) || !Array.isArray(b.args) || b.args.some((a) => typeof a !== "string" && typeof a !== "number")) return send(res, 400, { ok: false, error: "bad request" });

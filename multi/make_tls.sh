@@ -24,6 +24,12 @@ issue() {   # issue role extra-SAN
   cp ca.crt "$role/ca.crt"; rm -f "$role/node.csr" "$role/ext.cnf"; chmod 600 "$role/node.key"
   echo "issued $role (valid $DAYS days)"
 }
+if [ "$1" = "--node" ]; then          # v13.12: certificate for a node added later (network/add_node.py NAME ORG); CN dualshield-node-NAME lets the gateway give it exactly that identity
+  [[ "$2" =~ ^[A-Za-z][A-Za-z0-9]{1,15}$ ]] || { echo "usage: multi/make_tls.sh --node NAME   (letters and digits)"; exit 1; }
+  [ -f ca.key ] || { echo "no CA here: run multi/make_tls.sh first"; exit 1; }
+  issue "node-$2" ""; echo "copy multi/tls/node-$2 -> that laptop as multi/tls/node"; exit 0
+fi
+# re-running this script (without --node) ROTATES the three role certificates; the CA is kept, so nothing else changes. Copy the new target/ and peer/ folders again.
 issue dashboard "${D_IP:+IP:$D_IP}"
 issue target "${T_IP:+IP:$T_IP}"
 issue peer "${P_IP:+IP:$P_IP}"

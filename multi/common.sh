@@ -6,7 +6,12 @@ if [ ! -f "$CFG" ]; then
   exit 1
 fi
 . "$CFG"
-export T_AGENT_PORT P_AGENT_PORT DASH_VIEW_PASS DASH_SESSION_KEY DASH_IDLE_S DASH_MAX_S DEMO_MODE DASH_DEV TLS DISCOVERY REGISTRY_PORT AGENT_SECRET_T AGENT_SECRET_P DASH_PASS CHAIN_IP_KEY WHITELIST_CIDRS SELFGUARD_KEY
+# v13.5: if the secrets are sealed (python3 multi/secrets_vault.py seal), open them into this process's environment only; nothing is written back to disk
+if [ -f "$ROOT/multi/secrets.enc" ] && [ "${DS_SECRETS_LOADED:-0}" != "1" ]; then
+  _DS_S="$(python3 "$ROOT/multi/secrets_vault.py" env)" || { echo "cannot open multi/secrets.enc (wrong passphrase?)"; exit 1; }
+  eval "$_DS_S"; unset _DS_S; export DS_SECRETS_LOADED=1
+fi
+export DASH_OPERATOR_PASS DASH_BACKUP_CODES DASH_PATH_ROLES DASH_TOTP_SECRET DASH_AUDIT_MIRROR DASH_AUDIT_WEBHOOK DASH_CSP_NONCE DASH_ALLOW_HTTP DASH_VIEW_PASS DASH_SESSION_KEY DASH_IDLE_S DASH_MAX_S DEMO_MODE DASH_DEV TLS DISCOVERY REGISTRY_PORT AGENT_SECRET_T AGENT_SECRET_P DASH_PASS CHAIN_IP_KEY WHITELIST_CIDRS SELFGUARD_KEY
 export GATEWAY_PORT="${GATEWAY_PORT:-8600}" GATEWAY_LAB D_IP
 # v9: the chain is Hyperledger Fabric (no gas). T and P talk to the Fabric gateway on D: http://D_IP:GATEWAY_PORT, or with TLS=1
 # https with mutual TLS (private CA, multi/make_tls.sh); the gateway lets each certificate use only its own Fabric identity.

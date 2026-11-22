@@ -309,6 +309,14 @@ def _open_scan_subprocess(folder, limit=3.0):
 def pids_with_open_file_under(folder):
     folder = os.path.normcase(os.path.realpath(folder)) + os.sep
     found = set()
+    if IS_WIN:                            # v13.10: the kernel (ETW) already told us who is writing; no scan of every open handle needed
+        try:
+            import win_etw
+            if win_etw.STATE["running"]:
+                w = win_etw.writers_under(folder)
+                if w: return w
+        except Exception:
+            pass
     ps = _psutil()
     if IS_WIN and ps is None:
         return found

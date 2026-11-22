@@ -1,12 +1,12 @@
 import { execFileSync } from "child_process";
 import path from "path";
 import { MULTI, agent } from "../../../lib/agent.js";
-import { needAdmin, audit } from "../../../lib/security.js";
+import { needOperator, audit } from "../../../lib/security.js";
 
 // POST /api/rollback  {ip?}  -> restores data/sample_copy from the clean snapshot,
 // but only if its Merkle root matches the root anchored on-chain for that IP.
 export async function POST(req) {
-  const { w, deny } = needAdmin(req); if (deny) return deny;
+  const { w, deny } = needOperator(req); if (deny) return deny;
   const body = await req.json().catch(() => ({}));
   audit("ROLLBACK", w.name, w.ip, "requested");
   const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(body.ip || "") ? body.ip : (process.env.ATTACKER_IP || "172.30.0.12");

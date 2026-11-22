@@ -4,6 +4,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/multi/common.sh"
 LOGD="$ROOT/multi/logs"; mkdir -p "$LOGD"
 [ ${#DASH_PASS} -ge 8 ] && [ ${#AGENT_SECRET_T} -ge 16 ] && [ ${#AGENT_SECRET_P} -ge 16 ] || { echo "Set DASH_PASS, AGENT_SECRET_T and AGENT_SECRET_P in multi/config.env (run multi/gen_secrets.sh)"; exit 1; }
+if [ "${PRODUCTION:-0}" = "1" ]; then       # v13.12: no start with a known weak point
+  [ -f "$ROOT/multi/tls/dashboard/node.crt" ] || { echo "PRODUCTION: creating the private CA and certificates (multi/make_tls.sh)"; bash "$ROOT/multi/make_tls.sh" || exit 1
+    echo "copy multi/tls/target -> T:multi/tls/node and multi/tls/peer -> P:multi/tls/node (see multi/make_tls.sh), then start T and P"; }
+  python3 "$ROOT/multi/check_D.py" --start || { echo "PRODUCTION: fix the FAIL lines above (python3 multi/check_D.py shows them again) or start with PRODUCTION=0"; exit 1; }
+fi
+# v13.4: config.env holds every password: it must not be readable by other users (fixed automatically), and the weak spots are announced
+CFGMODE=$(stat -c %a "$ROOT/multi/config.env" 2>/dev/null); case "$CFGMODE" in 600|400) ;; *) chmod 600 "$ROOT/multi/config.env" && echo "note: multi/config.env was mode $CFGMODE, set to 600";; esac
+[ -n "$DASH_OPERATOR_PASS" ] && [ "$DASH_OPERATOR_PASS" = "$DASH_PASS" ] && { echo "DASH_OPERATOR_PASS must differ from DASH_PASS"; exit 1; }
+[ ${#DASH_TOTP_SECRET} -ge 16 ] && echo "2-step sign-in: ON (administrator and operator need an authenticator code)" || echo "WARNING: 2-step sign-in is OFF. Run  python3 multi/make_totp.py  to turn it on."
+[ "${TLS:-0}" = "1" ] || echo "NOTE: TLS=0. Sign-in is accepted only from this machine (http://localhost:3000); remote browsers are refused. Use TLS=1 for https://$D_IP:3443."
+[ -f "$ROOT/multi/secrets.enc" ] && echo "secrets: sealed (multi/secrets.enc), opened into memory only" || echo "NOTE: passwords are plain text in config.env. Seal them:  python3 multi/secrets_vault.py seal"
+[ -n "$DASH_AUDIT_MIRROR$DASH_AUDIT_WEBHOOK" ] || echo "NOTE: no audit mirror set (DASH_AUDIT_MIRROR or DASH_AUDIT_WEBHOOK): the audit log exists only on this machine."
 # ---- Hyperledger Fabric (no gas): network, chaincode, gateway
 FAB="$ROOT/fabric"
 [ -x "$FAB/bin/peer" ] || { echo "Fabric tools missing. Run once:  multi/install_D.sh   (or fabric/deploy/install_fabric.sh)"; exit 1; }
@@ -40,7 +52,7 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
 fi
 SCHEME=http; [ "${TLS:-0}" = "1" ] && SCHEME=https
 cd "$ROOT/dashboard"
-GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:${T_AGENT_PORT:-8800}" PEER_AGENT="$SCHEME://$P_IP:${P_AGENT_PORT:-8800}" ATTACKER_IP="$A_IP" \
+GATEWAY_PORT="$GATEWAY_PORT" DISCOVERY="${DISCOVERY:-0}" TLS="${TLS:-0}" MULTI=1 TARGET_AGENT="$SCHEME://$T_IP:8800" PEER_AGENT="$SCHEME://$P_IP:8800" ATTACKER_IP="$A_IP" \
   bash -c 'HOST="$([ "${TLS:-0}" = "1" ] && echo 127.0.0.1 || echo 0.0.0.0)"
     if [ "${DASH_DEV:-0}" = "1" ]; then exec npm run dev -- -H "$HOST"; fi
     # production build: no development server, no source maps in the browser, live data never cached

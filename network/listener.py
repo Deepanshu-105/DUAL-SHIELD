@@ -5,6 +5,7 @@ import ipaddress, os, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "multi"))
+import watchlist
 import shield_os            # v10: Linux ipset/iptables or Windows Firewall
 import ipcrypt
 from chainlib import Chain
@@ -57,6 +58,14 @@ def run():
             for ev in evs:
                 last = max(last, ev["id"])
                 name = ev.get("name")
+                if name == "ThreatReported":             # v13.7: a single node's report, quorum not reached yet -> watch that IP locally
+                    wip = ipcrypt.decode(ev.get("ip", ""))
+                    if wip and not wip.startswith("sensor:") and os.environ.get("WATCHLIST", "1") != "0":
+                        try:
+                            ipaddress.ip_address(wip); watchlist.watch(wip)
+                            print("WATCH ip=%s (reported by %s, waiting for a second node)" % (wip, ev.get("node", "?")), flush=True)
+                        except ValueError: pass
+                    continue
                 if name not in ("ThreatConsensusReached", "ThreatOverruled"):
                     continue
                 ip = ipcrypt.decode(ev.get("ip", ""))
@@ -67,7 +76,7 @@ def run():
                     print("OVERRULED ip=%s slashed=%d" % (ip, ev.get("slashedNodes", 0)), flush=True)
                     unblock(ip)
                     continue
-                print("EVENT ip=%s count=%d" % (ip, ev.get("count", 0)), flush=True)
+                print("EVENT ip=%s count=%d evidence=%s" % (ip, ev.get("count", 0), "local" if watchlist.was_seen(ip) else "consensus-only"), flush=True)
                 if ip.startswith("sensor:"):
                     sensor_event("QUARANTINE", ip[7:])
                     continue
