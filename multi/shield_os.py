@@ -96,6 +96,38 @@ def is_admin():
 
 
 # ------------------------------------------------------------------ block list (Layer 1)
+# v13.16: write-ahead journal of the blocks that SHOULD exist. It is written before the firewall is touched, so a crash cannot lose
+# a block, and multi/blockkeeper.py compares it with the real firewall (restores what was removed behind our back = tamper).
+def desired_path():
+    return log_path("blocks.desired.json")
+
+
+def desired_load():
+    try:
+        with open(desired_path()) as f:
+            return set(json.load(f))
+    except (OSError, ValueError):
+        return set()
+
+
+def desired_save(ips):
+    tmp = desired_path() + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(sorted(ips), f); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, desired_path())
+
+
+def _journal(ip, on):
+    if IS_WIN:
+        return
+    try:
+        d = desired_load()
+        (d.add if on else d.discard)(ip)
+        desired_save(d)
+    except OSError:
+        pass
+
+
 def block_init():
     """Make sure the block mechanism exists. Linux: ipset + the iptables DROP rule. Windows: nothing to create (rules are per IP)."""
     if IS_WIN:
@@ -124,6 +156,7 @@ def _set(ip):
 def block_add(ip):
     ip = _ip(ip)
     if not IS_WIN:
+        _journal(ip, True)
         _run(["ipset", "add", _set(ip), ip, "-exist"], check=True)
         return
     if block_test(ip):
@@ -141,6 +174,7 @@ def block_add(ip):
 def block_del(ip):
     ip = _ip(ip)
     if not IS_WIN:
+        _journal(ip, False)
         _run(["ipset", "del", _set(ip), ip, "-exist"], check=True)
         return
     _run([NETSH, "advfirewall", "firewall", "delete", "rule", "name=" + RULE_PREFIX + ip])   # rc 1 = already gone, fine
@@ -174,6 +208,8 @@ def block_list():
 
 def block_flush():
     if not IS_WIN:
+        try: desired_save(set())
+        except OSError: pass
         _run(["ipset", "flush", SET]); _run(["ipset", "flush", SET6])
         return
     for ip in list(_state_load()["blocked"]):

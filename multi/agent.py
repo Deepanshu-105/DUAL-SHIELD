@@ -17,7 +17,7 @@ Headers:  X-Ts (unix seconds), X-Nonce (random), X-Sig (hex).  Answer header: X-
 With TLS=1 the agent speaks mutual TLS (private CA, certificate for the dashboard role required) in addition to the HMAC.
 Lab use only: do not expose this to a real network.
 """
-import hashlib, hmac, json, os, re, subprocess, sys, threading, time
+import hashlib, hmac, ipaddress, json, os, re, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,11 +42,66 @@ LOGS = {
     "arp": shield_os.log_path("arp_alert.log"),
     "sensor": shield_os.log_path("sensor_alert.log"),
     "watch": os.path.join(RDIR, "evidence", "watch.log"),
+    "keeper": shield_os.log_path("keeper.log"),
+    "web": shield_os.log_path("web_guard.out"),
+    "host": shield_os.log_path("host_guard.out"),
+    "nodewatch": shield_os.log_path("nodewatch.log"),
 }
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 watcher = None   # subprocess of detect.py watch
 guard = None     # subprocess of guard.py (continuous vault + kill rule + containment)
 USE_GUARD = os.environ.get("GUARD", "1") == "1"
+
+# ---- v13.15 hardening of the agent itself ----
+PRODUCTION = os.environ.get("PRODUCTION", "0") == "1"
+DEMO_ENDPOINTS = not PRODUCTION          # /ransomware starts the mock attack and WIPES the vault (fresh=True): never in production
+MAX_BODY = int(os.environ.get("AGENT_MAX_BODY", "65536"))
+IO_TIMEOUT = float(os.environ.get("AGENT_IO_TIMEOUT", "15"))      # a slow client (slowloris) cannot hold a thread
+FAIL_MAX = int(os.environ.get("AGENT_FAIL_MAX", "10"))            # failed signatures from one address ...
+FAIL_WINDOW = float(os.environ.get("AGENT_FAIL_WINDOW", "60"))    # ... within this many seconds ...
+BAN_SECS = float(os.environ.get("AGENT_BAN_SECS", "300"))         # ... = that address is dropped for this long
+FAILS = {}; BANS = {}; FAIL_LOCK = threading.Lock()
+
+
+def _nets(spec):
+    out = []
+    for x in (spec or "").replace(";", ",").split(","):
+        x = x.strip()
+        if x:
+            try: out.append(ipaddress.ip_network(x, strict=False))
+            except ValueError: pass
+    return out
+
+
+ALLOW = _nets(os.environ.get("AGENT_ALLOW", ""))       # empty = any address (lab); start_T.sh sets it to the dashboard laptop in PRODUCTION
+
+
+def ip_allowed(ip, allow=None):
+    allow = ALLOW if allow is None else allow
+    if not allow: return True
+    try: a = ipaddress.ip_address(ip)
+    except ValueError: return False
+    return any(a in n for n in allow)
+
+
+def banned(ip, now=None):
+    now = time.time() if now is None else now
+    with FAIL_LOCK:
+        t = BANS.get(ip)
+        if t and t > now: return True
+        BANS.pop(ip, None); return False
+
+
+def note_fail(ip, now=None):
+    """Count a failed signature; returns True when this address has just been banned."""
+    now = time.time() if now is None else now
+    with FAIL_LOCK:
+        for k in [k for k, v in FAILS.items() if v[1] < now]: del FAILS[k]       # small table: old entries go
+        n, until = FAILS.get(ip, (0, now + FAIL_WINDOW))
+        n += 1; FAILS[ip] = (n, until)
+        if n >= FAIL_MAX:
+            BANS[ip] = now + BAN_SECS; FAILS.pop(ip, None); return True
+    return False
 
 
 def tail(path, n):
@@ -162,7 +217,13 @@ class H(BaseHTTPRequestHandler):
     nonce = ""
     tls_ok = True
 
+    timeout = IO_TIMEOUT      # StreamRequestHandler applies it to the socket
+
     def setup(self):          # TLS=1: mutual TLS, and only the dashboard's certificate may call the agent
+        ip = self.client_address[0]
+        if not ip_allowed(ip) or banned(ip):
+            self.tls_ok = False; super().setup(); return          # dropped without an answer
+        self.request.settimeout(IO_TIMEOUT)
         if tlsutil.enabled():
             self.tls_ok = tlsutil.accept_handshake(self.request, {"dualshield-dashboard"}) is not None
         super().setup()
@@ -186,9 +247,12 @@ class H(BaseHTTPRequestHandler):
 
     def read_body(self):
         try:
-            return self.rfile.read(int(self.headers.get("content-length") or 0))
+            n = int(self.headers.get("content-length") or 0)
         except ValueError:
             return b""
+        if n < 0 or n > MAX_BODY:
+            return None                                   # caller answers 413
+        return self.rfile.read(n)
 
     def authed(self, raw):
         ts, nonce, sig = self.headers.get("X-Ts", ""), self.headers.get("X-Nonce", ""), self.headers.get("X-Sig", "")
@@ -198,6 +262,7 @@ class H(BaseHTTPRequestHandler):
             fresh = False
         want = sign(self.command, self.path, ts, nonce, hashlib.sha256(raw).hexdigest()) if (ts and nonce) else ""
         if not (fresh and want and hmac.compare_digest(want, sig)):
+            if note_fail(self.client_address[0]): print("AGENT_BAN %s (too many bad signatures)" % self.client_address[0], flush=True)
             self.send(401, {"error": "bad signature or stale request"})
             return False
         now = time.time()
@@ -212,7 +277,11 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
-        if not self.authed(self.read_body()):
+        raw = self.read_body()
+        if raw is None:
+            self.close_connection = True
+            return self.send(413, {"error": "body too large"})
+        if not self.authed(raw):
             return
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -235,6 +304,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         raw = self.read_body()
+        if raw is None:
+            self.close_connection = True
+            return self.send(413, {"error": "body too large"})
         if not self.authed(raw):
             return
         body = {}
@@ -250,6 +322,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(400, {"ok": False, "output": "bad ip"})
             return self.send(200, run_rollback(ip))
         if self.path == "/ransomware":
+            if not DEMO_ENDPOINTS:
+                return self.send(403, {"ok": False, "output": "demo endpoint is disabled (PRODUCTION=1): it would wipe the vault"})
             return self.send(200, start_ransomware())
         if self.path == "/recover":
             ip = body.get("ip", "")
@@ -262,6 +336,8 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     if len(SECRET) < 16:
         sys.exit("AGENT_SECRET missing or shorter than 16 characters. Run multi/gen_secrets.sh and fill multi/config.env.")
+    if PRODUCTION and not tlsutil.enabled():
+        sys.exit("PRODUCTION=1 needs TLS=1 (mutual TLS is the real identity; IP allow-lists alone are weak). Refusing to start.")
     print("agent role=%s port=%d root=%s" % (ROLE, PORT, ROOT), flush=True)
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), H)
     if tlsutil.enabled():

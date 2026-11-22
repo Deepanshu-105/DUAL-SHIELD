@@ -1,0 +1,12 @@
+./xmrig --coin monero -o pool.minexmr.com:4444	/tmp/xmrig
+./XMRig	/tmp/XMRig
+./minerd -o stratum+tcp://pool:3333 -u w	/tmp/minerd
+./sysd -o pool.hashvault.pro:443 -u 48aaa	/tmp/sysd
+./dbused --donate-level=0	/var/tmp/dbused
+./kthreaddi	/tmp/kthreaddi
+./cpuminer-opt -a yespower -o stratum+tcp://x:1	/tmp/cpuminer-opt
+./srbminer-multi --algorithm randomx --pool x:1	/tmp/srbminer-multi
+./teamredminer -a ethash -o stratum+tcp://x:1	/tmp/teamredminer
+./gminer --algo ethash --server x --port 1	/tmp/gminer
+./crond -o gulf.moneroocean.stream:10128 -u w	/tmp/crond
+./a.out --url stratum+ssl://x:443	/tmp/a.out

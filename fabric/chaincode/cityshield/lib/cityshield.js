@@ -15,7 +15,7 @@ const { Contract } = require("fabric-contract-api");
 const crypto = require("crypto");
 
 const K = 2, STAKE = 1, WINDOW = 60;
-const P = { OVERRULE: 1, PROTECT: 2, UNPROTECT: 3, ADD_NODE: 4, REVOKE_NODE: 5, ADD_GOVERNOR: 6, REMOVE_GOVERNOR: 7, SET_THRESHOLD: 8, SET_QUORUM: 9, SET_RATE_LIMIT: 10 };
+const P = { OVERRULE: 1, PROTECT: 2, UNPROTECT: 3, ADD_NODE: 4, REVOKE_NODE: 5, ADD_GOVERNOR: 6, REMOVE_GOVERNOR: 7, SET_THRESHOLD: 8, SET_QUORUM: 9, SET_RATE_LIMIT: 10, SET_MIN_ORGS: 11 };
 
 const ipKey = (ip) => crypto.createHash("sha256").update(String(ip)).digest("hex");
 const num = (v, what) => {
@@ -51,6 +51,9 @@ class CityShield extends Contract {
   emit(ctx, list) {
     if (list.length) ctx.stub.setEvent("ShieldEvents", Buffer.from(JSON.stringify(list)));
   }
+  // v13.13: a threat is confirmed only when enough DIFFERENT organisations have reported it (minOrgs, default 1 = old behaviour).
+  // With minOrgs=2 two nodes of one organisation, even all of them compromised, can never block an address on their own.
+  orgsOf(list) { return new Set(list.map((r) => String(r).split(":")[0])).size; }
   required(c) {
     if (!c.quorumPct) return K;
     const r = Math.floor((c.nodeCount * c.quorumPct + 99) / 100);
@@ -124,7 +127,7 @@ class CityShield extends Contract {
     t.reporters.push(me);
     t.count++;
     const ev = [{ name: "ThreatReported", node: me, ip, count: t.count }];
-    if (!t.confirmed && t.count >= this.required(c)) {
+    if (!t.confirmed && t.count >= this.required(c) && this.orgsOf(t.reporters) >= (c.minOrgs || 1)) {
       t.confirmed = true;
       t.confirmedAt = now;
       ev.push({ name: "ThreatConsensusReached", ip, ja3: t.ja3, count: t.count });
@@ -136,7 +139,7 @@ class CityShield extends Contract {
   async getTally(ctx, ip) {
     const c = await this.cfg(ctx);
     const t = await this.get(ctx, "threat:" + ipKey(ip), null);
-    return JSON.stringify({ count: t ? t.count : 0, k: this.required(c), confirmed: t ? t.confirmed : false });
+    return JSON.stringify({ count: t ? t.count : 0, k: this.required(c), confirmed: t ? t.confirmed : false, reporters: t ? t.reporters : [] });
   }
   async requiredReports(ctx) { return JSON.stringify(this.required(await this.cfg(ctx))); }
   async isProtected(ctx, ip) { return JSON.stringify(await this.get(ctx, "prot:" + ipKey(ip), false)); }
@@ -158,6 +161,7 @@ class CityShield extends Contract {
       if (amt > 0) {
         await this.put(ctx, "stake:" + r, 0);
         c.slashedPool += amt;
+        c.nodeCount--;                       // v13.13: a slashed node no longer counts for the quorum (was left behind before)
         ev.push({ name: "NodeSlashed", node: r, ip, amount: amt });
       }
     }
@@ -185,7 +189,7 @@ class CityShield extends Contract {
     const me = this.caller(ctx), c = await this.cfg(ctx);
     if (!(await this.get(ctx, "gov:" + me, false))) throw new Error("governor only");
     const k = num(kind, "kind");
-    if (k < 1 || k > 10) throw new Error("bad kind");
+    if (k < 1 || k > 11) throw new Error("bad kind");
     const id = c.proposals++;
     const p = { kind: k, ip: ip || "", node: node || "", value: num(value || "0", "value"), approvals: 0, executed: false, signed: [] };
     const ev = [{ name: "ProposalCreated", id, kind: k, by: me }];
@@ -256,6 +260,9 @@ class CityShield extends Contract {
     } else if (k === P.SET_QUORUM) {
       if (p.value > 100) throw new Error("percent");
       c.quorumPct = p.value; ev.push({ name: "ParamChanged", param: "quorumPct", value: p.value });
+    } else if (k === P.SET_MIN_ORGS) {
+      if (p.value < 1 || p.value > 5) throw new Error("minOrgs 1-5");
+      c.minOrgs = p.value; ev.push({ name: "ParamChanged", param: "minOrgs", value: p.value });
     } else if (k === P.SET_RATE_LIMIT) {
       c.maxReportsPerHour = p.value; ev.push({ name: "ParamChanged", param: "maxReportsPerHour", value: p.value });
     }
@@ -271,7 +278,7 @@ class CityShield extends Contract {
   async params(ctx) {
     const c = await this.cfg(ctx);
     return JSON.stringify({ K, STAKE, WINDOW, owner: c.owner, govCount: c.govCount, govThreshold: c.govThreshold, nodeCount: c.nodeCount,
-      slashedPool: c.slashedPool, quorumPct: c.quorumPct, maxReportsPerHour: c.maxReportsPerHour, required: this.required(c) });
+      slashedPool: c.slashedPool, quorumPct: c.quorumPct, maxReportsPerHour: c.maxReportsPerHour, minOrgs: c.minOrgs || 1, required: this.required(c) });
   }
   async nodeInfo(ctx, node) {
     return JSON.stringify({ approved: await this.get(ctx, "approved:" + node, false), stake: await this.get(ctx, "stake:" + node, 0), governor: await this.get(ctx, "gov:" + node, false) });

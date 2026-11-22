@@ -1,0 +1,8 @@
+operation,files,flagged_off,flagged_on
+BENIGN edit_top (text),210,210,5
+BENIGN resave zip/jar,10,10,0
+BENIGN recompress gz,13,13,0
+ATTACK overwrite_all,300,300,300
+ATTACK keep_16,300,149,149
+ATTACK keep_magic,300,300,287
+ATTACK base64_armour,300,300,300

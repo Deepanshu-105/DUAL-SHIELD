@@ -1,10 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import { call, q, tx, listNodes } from "../../../../lib/gateway.js";
 import { needAdmin, audit, validIp, validNode } from "../../../../lib/security.js";
 
 // Governance and consensus view. GET: any logged-in role. POST: administrator (propose / approve), validated and audited.
 const WARMUP = "203.0.113.1";
 const KINDS = { 1: "Overrule a confirmed threat (slash its reporters)", 2: "Protect an IP", 3: "Unprotect an IP", 4: "Approve a node", 5: "Revoke a node",
-  6: "Add a governor", 7: "Remove a governor", 8: "Set governor threshold", 9: "Set quorum percent", 10: "Set reports-per-hour limit" };
+  6: "Add a governor", 7: "Remove a governor", 8: "Set governor threshold", 9: "Set quorum percent", 10: "Set reports-per-hour limit", 11: "Set minimum organisations that must report (1-5)" };
 const NODES = ["Org1MSP:User1@org1.example.com", "Org2MSP:User1@org2.example.com", "Org1MSP:User2@org1.example.com"];
 
 export async function GET() {
@@ -17,7 +19,10 @@ export async function GET() {
     const ips = [...new Set(evs.filter((e) => e.name === "ThreatReported").map((e) => e.ip))].slice(-6);
     const tallies = await Promise.all(ips.map(async (ip) => ({ ip, ...(await q("getTally", ip)), ...(await q("blockInfo", ip)) })));
     const nodes = await Promise.all((await listNodes()).map(async (n) => ({ addr: n, ...(await q("nodeInfo", n)) })));
-    return Response.json({ ok: true, params, kinds: KINDS, proposals: proposals.reverse(), tallies, nodes, events: evs.slice(-40).reverse() });
+    let trust = null;      // v13.13: scores of network/peer_trust.py (a file next to the audit log); null when the monitor is not running
+    try { const f = process.env.TRUST_FILE || path.join(process.cwd(), "..", "multi", "logs", "peer_trust.json"); const t = JSON.parse(fs.readFileSync(f, "utf8")); trust = Date.now() / 1000 - t.updated < 120 ? t : { stale: true }; } catch {}
+    for (const n of nodes) { const t = trust && trust.nodes && trust.nodes[n.addr]; n.trust = t ? t.state : trust && !trust.stale ? "OK" : null; n.trustScore = t ? t.score : 0; }
+    return Response.json({ ok: true, params, kinds: KINDS, trust: trust && !trust.stale ? { alerts: trust.alerts || [], act: trust.act } : null, proposals: proposals.reverse(), tallies, nodes, events: evs.slice(-40).reverse() });
   } catch (e) { return Response.json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 }
 
@@ -27,7 +32,7 @@ export async function POST(req) {
   try {
     if (b.action === "propose") {
       const kind = Number(b.kind);
-      if (!Number.isInteger(kind) || kind < 1 || kind > 10) return Response.json({ ok: false, error: "bad kind" }, { status: 400 });
+      if (!Number.isInteger(kind) || kind < 1 || kind > 11) return Response.json({ ok: false, error: "bad kind" }, { status: 400 });
       const ip = b.ip ? String(b.ip) : "", node = b.node ? String(b.node) : "", value = b.value === undefined || b.value === "" ? 0 : Number(b.value);
       if ([1, 2, 3].includes(kind) && !validIp(ip)) return Response.json({ ok: false, error: "valid IP address needed" }, { status: 400 });
       if ([4, 5, 6, 7].includes(kind) && !validNode(node)) return Response.json({ ok: false, error: "node id like Org1MSP:User1@org1.example.com needed" }, { status: 400 });

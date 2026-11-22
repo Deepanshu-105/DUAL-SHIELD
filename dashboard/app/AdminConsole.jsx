@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import EventsPanel from "./EventsPanel";
 
-const TABS = [["overview", "Overview"], ["l1", "Layer 1 · Network"], ["chain", "Consensus & Chain"], ["gov", "Governance"], ["l2", "Layer 2 · Ransomware"], ["sec", "Security posture"], ["audit", "Audit log"]];
+const TABS = [["overview", "Overview"], ["l1", "Layer 1 · Network"], ["events", "Attack events"], ["chain", "Consensus & Chain"], ["gov", "Governance"], ["l2", "Layer 2 · Ransomware"], ["sec", "Security posture"], ["audit", "Audit log"]];
 const TYPES = { crypto: "Encrypting ransomware", wiper: "Wiper (destroys data)", double_extortion: "Double extortion", exfiltration: "Data theft", note_only: "Ransom note only" };
 const WARM = "203.0.113.1";
 
@@ -140,6 +141,7 @@ export default function AdminConsole() {
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>LAYER 1 TIMELINE</h3><Timeline layer={1} />
         </>}
 
+        {tab === "events" && <EventsPanel />}
         {tab === "chain" && <>
           <Explain title="Why a blockchain here">One laptop saying "this IP is an attacker" can be wrong or hacked. The chain only turns a report into a <b>confirmed threat after K different staked nodes report it</b>. A node that reported something later overruled loses its stake (slashing). Fabric makes this a permissioned ledger: no coins, no gas.</Explain>
           <div className="grid">
@@ -150,7 +152,7 @@ export default function AdminConsole() {
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>THREAT TALLIES</h3>
           <div className="list">{adm && adm.tallies && adm.tallies.length ? adm.tallies.map((t) => <div className="row" key={t.ip}><span className="mono">{t.ip}</span><span>{t.count}/{t.k} reports</span><span className={"pill " + (t.confirmed ? "bad" : "warn")}>{t.confirmed ? "CONFIRMED" : "pending"}</span>{t.active === false && t.confirmed && <span className="pill mut">overruled</span>}</div>) : <div className="note">No reports yet.</div>}</div>
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>NODES</h3>
-          <div className="list">{adm && adm.nodes && adm.nodes.map((n) => <div className="row" key={n.addr}><span className="mono">{n.addr}</span><span className={"pill " + (n.stake > 0 ? "ok" : "bad")}>{n.stake > 0 ? "staked " + n.stake : n.approved ? "not registered" : "not approved"}</span>{n.governor && <span className="pill info">governor</span>}</div>)}</div>
+          <div className="list">{adm && adm.nodes && adm.nodes.map((n) => <div className="row" key={n.addr}><span className="mono">{n.addr}</span><span className={"pill " + (n.stake > 0 ? "ok" : "bad")}>{n.stake > 0 ? "staked " + n.stake : n.approved ? "not registered" : "not approved"}</span>{n.trust && <span className={"pill " + (n.trust === "OK" ? "ok" : "bad")} title={"trust score " + n.trustScore}>{n.trust === "OK" ? "trusted" : n.trust === "WATCH" ? "watched" : "SUSPENDED"}</span>}{n.governor && <span className="pill info">governor</span>}</div>)}</div>
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>LEDGER EVENTS (newest first)</h3>
           <div className="list">{adm && adm.events && adm.events.slice(0, 15).map((e, i) => <div className="row mono" key={i}>{e.name} {e.ip ? e.ip : ""} {e.node ? e.node.split("@")[0] : ""} {e.count != null ? "(" + e.count + ")" : ""}</div>)}</div>
         </>}
@@ -162,7 +164,7 @@ export default function AdminConsole() {
               <label>What<select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{adm && adm.kinds && Object.entries(adm.kinds).map(([k, v]) => <option key={k} value={k}>{k} · {v}</option>)}</select></label>
               {["1", "2", "3"].includes(form.kind) && <label>IP address<input value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })} placeholder="203.0.113.50" maxLength={45} /></label>}
               {["4", "5", "6", "7"].includes(form.kind) && <label>Node id<input value={form.node} onChange={(e) => setForm({ ...form, node: e.target.value })} placeholder="Org1MSP:User1@org1.example.com" maxLength={100} /></label>}
-              {["8", "9", "10"].includes(form.kind) && <label>Value<input value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} inputMode="numeric" maxLength={4} /></label>}
+              {["8", "9", "10", "11"].includes(form.kind) && <label>Value<input value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} inputMode="numeric" maxLength={4} /></label>}
               <button className="btn" disabled={!admin || busy === "prop"}>Submit proposal</button>
             </form></div>
           <h3 className="muted" style={{ margin: "16px 0 8px" }}>PROPOSALS</h3>

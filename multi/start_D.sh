@@ -34,6 +34,11 @@ export GATEWAY_URL="$([ "${TLS:-0}" = "1" ] && echo https || echo http)://127.0.
 wait_gateway || { echo "FAIL: Fabric gateway not answering (see $LOGD/fabric_gateway.out)"; exit 1; }
 PYTHONPATH="$ROOT/network" python3 "$ROOT/network/chain_setup.py" --approve || { echo "FAIL: node approval"; exit 1; }
 unset GATEWAY_URL
+# v13.13: the trust monitor watches the nodes themselves (a compromised peer that frames our own addresses is revoked); alert only unless PRODUCTION=1
+pkill -f network/peer_trust.py 2>/dev/null
+nohup env D_IP="$D_IP" T_IP="$T_IP" P_IP="$P_IP" WHITELIST_EXTRA="${WHITELIST_EXTRA:-}" TRUST_WEBHOOK="${DASH_AUDIT_WEBHOOK:-}" GATEWAY_URL="$([ "${TLS:-0}" = "1" ] && echo https || echo http)://127.0.0.1:$GATEWAY_PORT" TLS_DIR="${TLS_DIR:-$ROOT/multi/tls/dashboard}" \
+  python3 -u "$ROOT/network/peer_trust.py" --act "$([ "${PRODUCTION:-0}" = "1" ] && echo propose || echo alert)" > "$LOGD/peer_trust.out" 2>&1 &
+unset GATEWAY_URL
 cd "$ROOT"
 echo
 echo "Chain:     Hyperledger Fabric channel cityshield (no gas). Gateway on :$GATEWAY_PORT ($([ "${TLS:-0}" = "1" ] && echo "mutual TLS" || echo "plain HTTP"), lab identities: GATEWAY_LAB=${GATEWAY_LAB:-1})"
@@ -49,6 +54,11 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
   pkill -f multi/registry.py 2>/dev/null
   nohup env AGENT_SECRET_T="$AGENT_SECRET_T" AGENT_SECRET_P="$AGENT_SECRET_P" REGISTRY_PORT="${REGISTRY_PORT:-8801}" python3 -u "$ROOT/multi/registry.py" > $LOGD/registry.out 2>&1 &
   echo "Registry:  :${REGISTRY_PORT:-8801}   (T and P find each other through it; log $LOGD/registry.out)"
+fi
+if grep -Eq '^[[:space:]]*(ALERT_TELEGRAM_TOKEN|ALERT_WEBHOOK|ALERT_SMTP_HOST)=[^[:space:]#]' "$ROOT/multi/config.env" 2>/dev/null; then   # v13.22 alerts
+  pkill -f multi/alert_notify.py 2>/dev/null
+  nohup python3 -u "$ROOT/multi/alert_notify.py" > $LOGD/alert_notify.out 2>&1 &
+  echo "Alerts:    on (log $LOGD/alert_notify.out)"
 fi
 SCHEME=http; [ "${TLS:-0}" = "1" ] && SCHEME=https
 cd "$ROOT/dashboard"
