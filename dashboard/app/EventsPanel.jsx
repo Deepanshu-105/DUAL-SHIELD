@@ -24,7 +24,7 @@ export default function EventsPanel() {
   const T = ({ label, value, tone, note }) => (<div className={"card tile " + (tone || "")}><h3>{label}</h3><div className="big">{value}</div>{note && <div className="note">{note}</div>}</div>);
   return (<>
     <div className="explain"><b>Attack events</b><br />What the web guard, host guard, node watch and block keeper on T and P did: detected, blocked, killed, restored (retrieved) or quarantined. Network attacks (SSH, flood, scan) are on the Layer 1 tab, ransomware on the Layer 2 tab.</div>
-    <div style={{ marginTop: 10 }}><a className="tab" href="/api/report" target="_blank" rel="noreferrer">Incident report (print / PDF)</a></div>
+    <div style={{ marginTop: 10 }}><a className="btn" style={{ textDecoration: "none", display: "inline-block" }} href="/api/report" target="_blank" rel="noreferrer">Incident report (print / PDF)</a></div>
     <div className="grid" style={{ marginTop: 12 }}>
       <T label="Web attacks" value={c ? c.web : "n/a"} tone={c && c.web ? "bad" : ""} note="SQLi, XSS, traversal, scanners, flood" />
       <T label="Host attacks" value={c ? c.host : "n/a"} tone={c && c.host ? "bad" : ""} note="reverse shells, miners" />
@@ -34,7 +34,7 @@ export default function EventsPanel() {
       <T label="Firewall tampering" value={c ? c.keeper : "n/a"} tone={c && c.keeper ? "bad" : ""} note="blocks removed behind our back" />
     </div>
     <div style={{ margin: "14px 0 8px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-      {KINDS.map(([k, l]) => <button key={k} className={"tab" + (kind === k ? " on" : "")} onClick={() => setKind(k)}>{l}</button>)}
+      {KINDS.map(([k, l]) => <button key={k} className={"btn" + (kind === k ? "" : " ghost")} style={{ marginRight: 6, marginTop: 10 }} onClick={() => setKind(k)}>{l}</button>)}
     </div>
     <div className="list">
       {list.map((e, i) => (

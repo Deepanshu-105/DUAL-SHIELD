@@ -1,3 +1,5 @@
+> **Legacy prototype.** The current ledger is Hyperledger Fabric (see ../README_FABRIC.md, ../docs/DOCUMENTATION.md). This folder is the early Hardhat version, kept for the gas and latency numbers in REPORT_DRAFT.md. The commands below do not start the current system.
+
 # How to connect to CityShield
 
 Start chain:  cd blockchain && npx hardhat node --hostname 0.0.0.0
