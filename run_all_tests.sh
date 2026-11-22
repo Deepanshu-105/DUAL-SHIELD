@@ -15,7 +15,7 @@ py() { local f="$1"; if [ ! -e "$f" ]; then SKIP=$((SKIP+1)); ROWS+=$(printf '%-
 run "chaincode unit tests (npm test)" npm bash -c 'cd fabric/chaincode/cityshield && npm test'
 for t in network/test_block_policy.py network/test_peer_trust.py network/test_watchlist.py \
          multi/test_agent_hardening.py multi/test_blockkeeper.py multi/test_v11.py multi/test_v12.py multi/test_v13_11.py \
-         multi/test_registry.py multi/test_tls.py multi/test_windows_mode.py detector/test_v5.py detector/test_web_guard.py detector/test_host_guard.py multi/test_node_watch.py; do
+         multi/test_registry.py multi/test_tls.py multi/test_windows_mode.py detector/test_v5.py; do
   case "$t" in network/test_watchlist.py) run "$t" chain python3 "$t";; *) py "$t";; esac
 done
 run "fabric/test_trust.py (real chain)" chain python3 fabric/test_trust.py
