@@ -413,7 +413,8 @@ class WriterTracker:
             if _protected_name(p.info.get("name")):
                 continue
             try:
-                cur[p.info["pid"]] = p.io_counters().write_bytes
+                io = p.io_counters()      # v13.26: write_bytes (disk) can stay flat on some kernels (WSL2); write_chars counts every write() call
+                cur[p.info["pid"]] = max(io.write_bytes, getattr(io, "write_chars", 0) or 0)
             except Exception:
                 continue
         now = time.time()

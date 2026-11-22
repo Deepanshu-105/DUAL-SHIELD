@@ -39,7 +39,7 @@ pkill -f multi/node_watch.py 2>/dev/null
 [ -s /var/lib/dualshield/nodewatch.baseline.json ] || "$PY" "$ROOT/multi/node_watch.py" --init      # baseline = this (clean) node
 nohup "$PY" -u "$ROOT/multi/node_watch.py" > /var/log/nodewatch.out 2>&1 &     # NODEWATCH_ALERT lines: new port / uid-0 / keys / cron / module ...
 AGENT_ALLOW_V=""; [ "${PRODUCTION:-0}" = "1" ] && AGENT_ALLOW_V="$D_IP,127.0.0.1"      # v13.15: only the dashboard laptop may even talk to the agent
-PRODUCTION="${PRODUCTION:-0}" AGENT_ALLOW="${AGENT_ALLOW:-$AGENT_ALLOW_V}" CONTAIN_ALLOW="$D_IP,$P_IP" CONTAIN="${CONTAIN:-}" QUARANTINE_MAX_S="${QUARANTINE_MAX_S:-900}" AGENT_SECRET="$AGENT_SECRET_T" ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
+AGENT_DEMO="${AGENT_DEMO:-0}" PRODUCTION="${PRODUCTION:-0}" AGENT_ALLOW="${AGENT_ALLOW:-$AGENT_ALLOW_V}" CONTAIN_ALLOW="$D_IP,$P_IP" CONTAIN="${CONTAIN:-}" QUARANTINE_MAX_S="${QUARANTINE_MAX_S:-900}" AGENT_SECRET="$AGENT_SECRET_T" ROLE=target SHIELD_ROOT="$ROOT" SHIELD_PY="$PY" nohup "$PY" "$ROOT/multi/agent.py" > /var/log/agent.out 2>&1 &
 # v3: opt-in in the lab (FLOOD=1 ...), ON by default when PRODUCTION=1 (v13.15)
 if [ "${PRODUCTION:-0}" = "1" ]; then FLOOD="${FLOOD:-1}"; LOGIN_WATCH="${LOGIN_WATCH:-1}"; ARP_WATCH="${ARP_WATCH:-1}"; fi
 # v3, opt-in (FLOOD=1 / BLOCK_TTL=seconds in multi/config.env): DDoS and port-scan detector, and block expiry.

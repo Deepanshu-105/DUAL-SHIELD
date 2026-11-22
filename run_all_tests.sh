@@ -15,10 +15,15 @@ py() { local f="$1"; if [ ! -e "$f" ]; then SKIP=$((SKIP+1)); ROWS+=$(printf '%-
 run "chaincode unit tests (npm test)" npm bash -c 'cd fabric/chaincode/cityshield && npm test'
 for t in network/test_block_policy.py network/test_peer_trust.py network/test_watchlist.py \
          multi/test_agent_hardening.py multi/test_blockkeeper.py multi/test_v11.py multi/test_v12.py multi/test_v13_11.py \
-         multi/test_registry.py multi/test_tls.py multi/test_windows_mode.py detector/test_v5.py; do
+         multi/test_registry.py multi/test_tls.py multi/test_windows_mode.py detector/test_v5.py \
+         detector/test_web_guard.py detector/test_host_guard.py detector/test_more_attacks.py detector/test_flood.py \
+         multi/test_node_watch.py multi/test_alert_notify.py multi/test_agent_demo.py multi/test_writer_tracker.py multi/test_win_etw.py; do
   case "$t" in network/test_watchlist.py) run "$t" chain python3 "$t";; *) py "$t";; esac
 done
 run "fabric/test_trust.py (real chain)" chain python3 fabric/test_trust.py
+for t in dashboard/test_events.mjs dashboard/test_report.mjs; do [ -e "$t" ] && run "$t" none node "$t"; done
+# ransomware guard / types / vault (mock only; test_m3.py = 10 full runs is slower: run it by hand)
+for t in test_guard.py test_types.py test_protect_vault.py; do [ -e "ransomware/$t" ] && run "ransomware/$t" none bash -c "cd ransomware && python3 setup_sample.py >/dev/null 2>&1; python3 $t"; done
 printf '%s' "$ROWS" | sed '/^$/d'
 echo "------"; echo "TOTAL: $PASS pass, $FAIL fail, $SKIP skipped"
 rm -f /tmp/ds_test.$$; [ "$FAIL" = 0 ]

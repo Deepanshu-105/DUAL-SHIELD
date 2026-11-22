@@ -54,7 +54,7 @@ USE_GUARD = os.environ.get("GUARD", "1") == "1"
 
 # ---- v13.15 hardening of the agent itself ----
 PRODUCTION = os.environ.get("PRODUCTION", "0") == "1"
-DEMO_ENDPOINTS = not PRODUCTION          # /ransomware starts the mock attack and WIPES the vault (fresh=True): never in production
+DEMO_ENDPOINTS = (not PRODUCTION) or os.environ.get("AGENT_DEMO", "0") == "1"   # /ransomware starts the mock attack and WIPES the vault (fresh=True): off in PRODUCTION unless AGENT_DEMO=1 (demo day only)
 MAX_BODY = int(os.environ.get("AGENT_MAX_BODY", "65536"))
 IO_TIMEOUT = float(os.environ.get("AGENT_IO_TIMEOUT", "15"))      # a slow client (slowloris) cannot hold a thread
 FAIL_MAX = int(os.environ.get("AGENT_FAIL_MAX", "10"))            # failed signatures from one address ...
@@ -323,7 +323,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, run_rollback(ip))
         if self.path == "/ransomware":
             if not DEMO_ENDPOINTS:
-                return self.send(403, {"ok": False, "output": "demo endpoint is disabled (PRODUCTION=1): it would wipe the vault"})
+                return self.send(403, {"ok": False, "output": "demo endpoint is disabled (PRODUCTION=1; set AGENT_DEMO=1 in multi/config.env for a demo): it would wipe the vault"})
             return self.send(200, start_ransomware())
         if self.path == "/recover":
             ip = body.get("ip", "")
